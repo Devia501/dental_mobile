@@ -15,10 +15,12 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
-import { pendingPhotos } from "../../services/galleryState";
+import { galleryState } from "../../services/galleryState";
 
 const { width } = Dimensions.get("window");
-const COLUMN_WIDTH = (width - 48) / 2;
+const COLUMN_GAP = 16;
+const HORIZONTAL_PADDING = 24;
+const COLUMN_WIDTH = (width - HORIZONTAL_PADDING * 2 - COLUMN_GAP) / 2;
 
 export default function GalleryScreen() {
   const insets = useSafeAreaInsets();
@@ -26,6 +28,7 @@ export default function GalleryScreen() {
   const [photos, setPhotos] = useState<MediaLibrary.Asset[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<string[]>([]);
+  const [search, setSearch] = useState("");
 
   useEffect(() => {
     if (permissionResponse?.granted) {
@@ -82,23 +85,30 @@ export default function GalleryScreen() {
   };
 
   const handleConfirm = () => {
-    pendingPhotos.uris = selected;
-    pendingPhotos.ready = true;
+    galleryState.resolve(selected);
     router.back();
   };
+
+  const filteredPhotos = photos; // search bisa dikembangkan nanti
 
   const renderItem = ({ item }: { item: MediaLibrary.Asset }) => {
     const isSelected = selected.includes(item.uri);
     return (
       <TouchableOpacity
         style={styles.imageCard}
-        activeOpacity={0.8}
+        activeOpacity={0.85}
         onPress={() => toggleSelect(item.uri)}
       >
-        <Image source={{ uri: item.uri }} style={styles.imageActual} />
+        <Image
+          source={{ uri: item.uri }}
+          style={styles.image}
+          resizeMode="cover"
+        />
         {isSelected && (
           <View style={styles.selectedOverlay}>
-            <Ionicons name="checkmark-circle" size={28} color="#34B3B9" />
+            <View style={styles.checkCircle}>
+              <Ionicons name="checkmark" size={16} color="#fff" />
+            </View>
           </View>
         )}
       </TouchableOpacity>
@@ -107,17 +117,34 @@ export default function GalleryScreen() {
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
+      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={24} color="#000" />
+          <Ionicons name="arrow-back" size={22} color="#1a1a1a" />
         </TouchableOpacity>
       </View>
 
       <View style={styles.content}>
+        {/* Title */}
         <Text style={styles.titleSmall}>View Your</Text>
         <Text style={styles.titleBig}>Recents</Text>
 
-        {/* Tombol Konfirmasi */}
+        {/* Search Bar */}
+        <View style={styles.searchContainer}>
+          <TextInput
+            placeholder="Search here..."
+            placeholderTextColor="#aaa"
+            style={styles.searchInput}
+            value={search}
+            onChangeText={setSearch}
+          />
+          <Ionicons name="search-outline" size={18} color="#999" />
+        </View>
+
+        {/* Section Label */}
+        <Text style={styles.sectionLabel}>Image</Text>
+
+        {/* Confirm Button */}
         {selected.length > 0 && (
           <TouchableOpacity style={styles.confirmBtn} onPress={handleConfirm}>
             <Text style={styles.confirmBtnText}>
@@ -126,32 +153,22 @@ export default function GalleryScreen() {
           </TouchableOpacity>
         )}
 
-        <View style={styles.searchContainer}>
-          <TextInput
-            placeholder="Search here..."
-            placeholderTextColor="#888"
-            style={styles.searchInput}
-          />
-          <Ionicons name="search-outline" size={18} color="#000" />
-        </View>
-
-        <Text style={styles.sectionLabel}>Image</Text>
-
+        {/* Grid */}
         {loading ? (
           <ActivityIndicator
             size="large"
             color="#34B3B9"
-            style={{ marginTop: 50 }}
+            style={{ marginTop: 60 }}
           />
         ) : (
           <FlatList
-            data={photos}
+            data={filteredPhotos}
             renderItem={renderItem}
             keyExtractor={(item) => item.id}
             numColumns={2}
             showsVerticalScrollIndicator={false}
             columnWrapperStyle={styles.row}
-            contentContainerStyle={{ paddingBottom: 40 }}
+            contentContainerStyle={{ paddingBottom: 60 }}
           />
         )}
       </View>
@@ -160,78 +177,138 @@ export default function GalleryScreen() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#fff" },
+  container: {
+    flex: 1,
+    backgroundColor: "#ffffff",
+  },
+
+  /* Permission screen */
   permissionContainer: {
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
     backgroundColor: "#E2F0F1",
   },
-  permissionText: { fontSize: 16, color: "#555", marginVertical: 16 },
+  permissionText: {
+    fontSize: 16,
+    color: "#555",
+    marginVertical: 16,
+  },
   permissionBtn: {
     backgroundColor: "#34B3B9",
     paddingHorizontal: 24,
     paddingVertical: 12,
     borderRadius: 30,
   },
-  permissionBtnText: { color: "#fff", fontWeight: "bold" },
-  header: { paddingHorizontal: 16, paddingVertical: 10 },
-  backBtn: { width: 40, height: 40, justifyContent: "center" },
-  content: { flex: 1, paddingHorizontal: 20 },
-  titleSmall: { fontSize: 18, fontWeight: "700", color: "#000" },
+  permissionBtnText: {
+    color: "#fff",
+    fontWeight: "bold",
+  },
+
+  /* Header */
+  header: {
+    paddingHorizontal: HORIZONTAL_PADDING,
+    paddingVertical: 12,
+  },
+  backBtn: {
+    width: 36,
+    height: 36,
+    justifyContent: "center",
+  },
+
+  /* Content */
+  content: {
+    flex: 1,
+    paddingHorizontal: HORIZONTAL_PADDING,
+  },
+
+  /* Title */
+  titleSmall: {
+    fontSize: 17,
+    fontWeight: "700",
+    color: "#1a1a1a",
+    marginBottom: 2,
+  },
   titleBig: {
-    fontSize: 32,
+    fontSize: 30,
     fontWeight: "800",
     color: "#34B3B9",
     marginBottom: 20,
   },
+
+  /* Search */
   searchContainer: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "#EAEAEA",
-    borderRadius: 25,
-    paddingHorizontal: 20,
-    height: 45,
-    marginBottom: 30,
+    backgroundColor: "#F2F2F2",
+    borderRadius: 30,
+    paddingHorizontal: 18,
+    height: 46,
+    marginBottom: 24,
   },
-  searchInput: { flex: 1, fontSize: 14, color: "#000" },
+  searchInput: {
+    flex: 1,
+    fontSize: 14,
+    color: "#1a1a1a",
+  },
+
+  /* Section label */
   sectionLabel: {
-    fontSize: 18,
+    fontSize: 17,
     fontWeight: "700",
-    color: "#000",
-    marginBottom: 15,
+    color: "#1a1a1a",
+    marginBottom: 14,
   },
-  row: { justifyContent: "space-between", marginBottom: 16 },
+
+  /* Confirm button */
+  confirmBtn: {
+    backgroundColor: "#34B3B9",
+    borderRadius: 30,
+    paddingVertical: 13,
+    alignItems: "center",
+    marginBottom: 16,
+  },
+  confirmBtnText: {
+    color: "#fff",
+    fontWeight: "700",
+    fontSize: 15,
+  },
+
+  /* Grid */
+  row: {
+    justifyContent: "space-between",
+    marginBottom: COLUMN_GAP,
+  },
   imageCard: {
     width: COLUMN_WIDTH,
-    height: COLUMN_WIDTH * 1.1,
-    borderRadius: 20,
-    backgroundColor: "#f0f0f0",
+    height: COLUMN_WIDTH * 1.15,
+    borderRadius: 18,
+    backgroundColor: "#ECECEC",
     overflow: "hidden",
   },
-  imageActual: { width: "100%", height: "100%" },
+  image: {
+    width: "100%",
+    height: "100%",
+  },
+
+  /* Selected state */
   selectedOverlay: {
     position: "absolute",
     top: 0,
     left: 0,
     right: 0,
     bottom: 0,
-    backgroundColor: "rgba(52,179,185,0.25)",
-    justifyContent: "flex-start",
-    alignItems: "flex-end",
-    padding: 8,
+    backgroundColor: "rgba(52,179,185,0.30)",
   },
-  confirmBtn: {
+  checkCircle: {
+    position: "absolute",
+    top: 10,
+    right: 10,
+    width: 26,
+    height: 26,
+    borderRadius: 13,
     backgroundColor: "#34B3B9",
-    borderRadius: 30,
-    paddingVertical: 12,
-    paddingHorizontal: 24,
+    justifyContent: "center",
     alignItems: "center",
-    marginBottom: 16,
-  },
-  confirmBtnText: {
-    color: "#fff",
-    fontWeight: "bold",
-    fontSize: 15,
   },
 });

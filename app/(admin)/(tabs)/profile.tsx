@@ -1,8 +1,11 @@
 import { Ionicons } from "@expo/vector-icons";
+import * as ImagePicker from "expo-image-picker"; // Tambahkan ini untuk foto
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
-import { useState } from "react";
+import * as SecureStore from "expo-secure-store";
+import { useEffect, useState } from "react";
 import {
+  Alert,
   Dimensions,
   Image,
   Modal,
@@ -15,18 +18,26 @@ import {
 import { useSharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AppHeader from "../../../components/shared/AppHeader";
-import { logout } from "../../../services/authService";
+import {
+  changeEmail,
+  changePassword,
+  logout,
+  updateProfileImage,
+} from "../../../services/authService";
 
 const { width } = Dimensions.get("window");
 
 export default function Profile() {
   const insets = useSafeAreaInsets();
-  const scrollY = useSharedValue(0); // dummy — profile tidak scroll header
+  const scrollY = useSharedValue(0);
 
-  // State untuk mengontrol Modal
+  const [userData, setUserData] = useState<{
+    name: string;
+    email: string;
+    avatar?: string;
+  } | null>(null);
   const [modalType, setModalType] = useState<"email" | "password" | null>(null);
 
-  // State untuk Input
   const [emailData, setEmailData] = useState({
     current: "",
     new: "",
@@ -38,13 +49,108 @@ export default function Profile() {
     confirm: "",
   });
 
+  useEffect(() => {
+    const fetchUser = async () => {
+      const userString = await SecureStore.getItemAsync("user");
+      if (userString) setUserData(JSON.parse(userString));
+    };
+    fetchUser();
+  }, []);
+
+  // --- FUNGSI UPLOAD FOTO ---
+  const handlePickImage = async () => {
+    const permissionResult =
+      await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (permissionResult.granted === false) {
+      Alert.alert(
+        "Izin Ditolak",
+        "Aplikasi butuh akses galeri untuk mengubah foto.",
+      );
+      return;
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
+      quality: 0.5,
+    });
+
+    if (!result.canceled && result.assets[0].uri) {
+      const selectedImage = result.assets[0].uri;
+
+      try {
+        const res = await updateProfileImage(selectedImage);
+
+        if (res.success) {
+          // Ambil URL dari server, jika server kirim default/null, pakai foto lokal tadi
+          const serverUrl =
+            res.data?.profile_image_url || res.data?.profile_image;
+          const photoUrl =
+            serverUrl && !serverUrl.includes(".svg")
+              ? serverUrl
+              : selectedImage;
+
+          const updatedUser = { ...userData, avatar: photoUrl };
+          setUserData(updatedUser as any);
+
+          // SIMPAN KE STORAGE: Ini kunci agar tidak hilang saat buka tutup aplikasi
+          await SecureStore.setItemAsync("user", JSON.stringify(updatedUser));
+
+          Alert.alert("Sukses", "Foto profil berhasil diperbarui!");
+        }
+      } catch (error) {
+        console.log("Upload error:", error);
+      }
+    }
+  };
+
   const handleLogout = async () => {
     try {
       await logout();
+      router.replace("/login");
     } catch (error) {
       console.log("error logout:", error);
-    } finally {
-      router.replace("/login");
+    }
+  };
+
+  const handleUpdateEmail = async () => {
+    if (!emailData.current || !emailData.new) {
+      Alert.alert("Peringatan", "Isi password saat ini dan email baru.");
+      return;
+    }
+    try {
+      // Menggunakan changeEmail sesuai permintaanmu
+      const res = await changeEmail(emailData.current, emailData.new);
+      if (res.success) {
+        const updatedUser = { ...userData, email: emailData.new };
+        setUserData(updatedUser as any);
+        await SecureStore.setItemAsync("user", JSON.stringify(updatedUser));
+        Alert.alert("Sukses", "Email berhasil diubah melalui changeEmail");
+        setModalType(null);
+      } else {
+        Alert.alert("Gagal", res.message || "Gagal update email");
+      }
+    } catch (error) {
+      Alert.alert("Error", "Koneksi gagal");
+    }
+  };
+
+  const handleUpdatePassword = async () => {
+    try {
+      const res = await changePassword(
+        passwordData.current,
+        passwordData.new,
+        passwordData.confirm,
+      );
+      if (res.success) {
+        Alert.alert("Sukses", "Password berhasil diubah");
+        setModalType(null);
+      } else {
+        Alert.alert("Gagal", res.message);
+      }
+    } catch (error) {
+      Alert.alert("Error", "Koneksi gagal");
     }
   };
 
@@ -53,67 +159,59 @@ export default function Profile() {
       return (
         <View style={styles.modalCard}>
           <Text style={styles.modalTitle}>Change Email</Text>
-
-          <Text style={styles.inputLabel}>Email</Text>
+          <Text style={styles.inputLabel}>Current Password</Text>
           <TextInput
             style={styles.input}
-            value="sitiazizah620@gmail.com"
-            editable={false}
+            secureTextEntry
+            placeholder="Verify password"
+            onChangeText={(txt) => setEmailData({ ...emailData, current: txt })}
           />
-
           <Text style={styles.inputLabel}>New Email</Text>
           <TextInput
             style={styles.input}
             placeholder="Enter new email"
             onChangeText={(txt) => setEmailData({ ...emailData, new: txt })}
           />
-
-          <Text style={styles.inputLabel}>Confirm Email</Text>
-          <TextInput
-            style={styles.input}
-            placeholder="Confirm new email"
-            onChangeText={(txt) => setEmailData({ ...emailData, confirm: txt })}
-          />
-
           <TouchableOpacity
             style={styles.submitBtn}
-            onPress={() => setModalType(null)}
+            onPress={handleUpdateEmail}
           >
             <Text style={styles.submitBtnText}>Change Email</Text>
           </TouchableOpacity>
         </View>
       );
     }
-
     if (modalType === "password") {
       return (
         <View style={styles.modalCard}>
           <Text style={styles.modalTitle}>Change Password</Text>
-
-          <Text style={styles.inputLabel}>Password</Text>
+          <Text style={styles.inputLabel}>Current Password</Text>
           <TextInput
             style={styles.input}
             secureTextEntry
-            placeholder="••••••••"
+            onChangeText={(txt) =>
+              setPasswordData({ ...passwordData, current: txt })
+            }
           />
-
           <Text style={styles.inputLabel}>New Password</Text>
           <TextInput
             style={styles.input}
             secureTextEntry
-            placeholder="••••••••"
+            onChangeText={(txt) =>
+              setPasswordData({ ...passwordData, new: txt })
+            }
           />
-
           <Text style={styles.inputLabel}>Confirm Password</Text>
           <TextInput
             style={styles.input}
             secureTextEntry
-            placeholder="••••••••"
+            onChangeText={(txt) =>
+              setPasswordData({ ...passwordData, confirm: txt })
+            }
           />
-
           <TouchableOpacity
             style={styles.submitBtn}
-            onPress={() => setModalType(null)}
+            onPress={handleUpdatePassword}
           >
             <Text style={styles.submitBtnText}>Save Password</Text>
           </TouchableOpacity>
@@ -125,7 +223,6 @@ export default function Profile() {
 
   return (
     <View style={styles.container}>
-      {/* Modal */}
       <Modal
         visible={modalType !== null}
         transparent
@@ -143,17 +240,23 @@ export default function Profile() {
         </TouchableOpacity>
       </Modal>
 
-      {/* ✅ AppHeader menggantikan header manual */}
       <AppHeader scrollY={scrollY} />
-
       <View style={styles.topSection} />
 
       <View style={styles.avatarContainer} pointerEvents="box-none">
         <View style={styles.avatarWrapper}>
           <View style={styles.avatar}>
-            <Ionicons name="person" size={60} color="#ffffff" />
+            {userData?.avatar ? (
+              <Image
+                // Tambahkan ?timestamp agar URL selalu dianggap baru oleh React Native
+                source={{ uri: `${userData.avatar}?t=${new Date().getTime()}` }}
+                style={{ width: 110, height: 110, borderRadius: 60 }}
+              />
+            ) : (
+              <Ionicons name="person" size={60} color="#ffffff" />
+            )}
           </View>
-          <TouchableOpacity style={styles.editBtn}>
+          <TouchableOpacity style={styles.editBtn} onPress={handlePickImage}>
             <Image
               source={require("../../../assets/icons/Pencil.png")}
               style={styles.pencilIcon}
@@ -164,8 +267,10 @@ export default function Profile() {
 
       <LinearGradient colors={["#E2F0F1", "#E2F0F1"]} style={styles.card}>
         <View style={{ paddingTop: 60 }}>
-          <Text style={styles.nama}>Admin Budi</Text>
-          <Text style={styles.email}>budi.santoso@dentalclinic.id</Text>
+          <Text style={styles.nama}>{userData?.name || "Admin"}</Text>
+          <Text style={styles.email}>
+            {userData?.email || "email@dentalclinic.id"}
+          </Text>
 
           <Text style={styles.pengaturanLabel}>Pengaturan Akun</Text>
 
@@ -232,6 +337,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
     borderWidth: 4,
     borderColor: "#d3d1d1",
+    overflow: "hidden",
   },
   editBtn: {
     position: "absolute",
@@ -300,11 +406,9 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   logoutText: { fontSize: 14, fontWeight: "bold", color: "#fff", right: 6 },
-
-  // ✅ Modal Styles
   modalOverlay: {
     flex: 1,
-    backgroundColor: "rgba(0,0,0,0.3)", // Efek blur/gelap di belakang
+    backgroundColor: "rgba(0,0,0,0.3)",
     justifyContent: "center",
     alignItems: "center",
   },
@@ -352,9 +456,5 @@ const styles = StyleSheet.create({
     marginTop: 10,
     elevation: 3,
   },
-  submitBtnText: {
-    color: "#fff",
-    fontSize: 16,
-    fontWeight: "bold",
-  },
+  submitBtnText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
 });

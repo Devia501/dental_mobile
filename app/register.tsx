@@ -44,10 +44,16 @@ export default function Register() {
     try {
       const data = await register(name, email, password, confirmPassword);
 
-      if (data.token) {
-        router.replace("/(admin)/(tabs)/beranda");
+      if (data.success) {
+        alert("Registrasi berhasil! Silakan login.");
+        router.replace("/login");
       } else {
-        alert(data.message || "Register gagal!");
+        if (data.errors) {
+          const firstError = Object.values(data.errors)[0] as string[];
+          alert(firstError[0]);
+        } else {
+          alert(data.message || "Register gagal!");
+        }
       }
     } catch (error) {
       alert("Gagal konek ke server!");
