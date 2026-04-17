@@ -17,6 +17,7 @@ import Animated, {
   useSharedValue,
 } from "react-native-reanimated";
 import AppHeader from "../../../components/shared/AppHeader";
+import { getRontgenList } from "../../../services/rontgenService";
 
 const HEADER_HEIGHT = 100;
 const PARALLAX_DISTANCE = 2;
@@ -50,128 +51,6 @@ const fotoTagColor: Record<string, { bg: string; text: string }> = {
   intraoral: { bg: "#F3E8FF", text: "#B57BDD" },
 };
 
-// ━━━━━━━━━━━  DATA  ━━━━━━━━━━━
-
-const pasienRontgen = [
-  {
-    id: 2,
-    nama: "Siti Rahayu",
-    no: "002",
-    jam: "08:45",
-    umur: "25 th",
-    fotoKeys: ["rontgen_xray", "profil_gigi", "intraoral"],
-  },
-  {
-    id: 5,
-    nama: "Dewi Lestari",
-    no: "005",
-    jam: "10:00",
-    umur: "25 th",
-    fotoKeys: ["profil_gigi", "intraoral"],
-  },
-  {
-    id: 6,
-    nama: "Jasmine",
-    no: "002",
-    jam: "08:45",
-    umur: "25 th",
-    fotoKeys: ["rontgen_xray", "intraoral"],
-  },
-  {
-    id: 7,
-    nama: "Ahmad Fauzi",
-    no: "002",
-    jam: "08:45",
-    umur: "25 th",
-    fotoKeys: ["rontgen_xray"],
-  },
-];
-
-const historyData = [
-  {
-    tanggal: "TODAY, OCT 24",
-    items: [
-      {
-        id: 1,
-        nama: "Ahmad Fauzi",
-        jam: "10:30 AM",
-        judul: "Pemeriksaan Gigi Geraham Bawah Kiri",
-        deskripsi:
-          "Dugaan terdapat lubang pada daerah distal. Disarankan untuk segera penambalan dan...",
-        // ✅ fotoKeys untuk tag icons
-        fotoKeys: ["rontgen_xray", "profil_gigi"],
-        foto: null,
-        no: "003",
-        umur: "41 th",
-        dokter: "Dr. Budi Setiawan",
-        notes:
-          "Dugaan terdapat lubang pada daerah distal. Disarankan untuk segera penambalan.",
-        fotoRontgen: "2",
-        fotoProfil: "1",
-        fotoIntraoral: "0",
-      },
-      {
-        id: 2,
-        nama: "Michael Chen",
-        jam: "09:15 AM",
-        judul: "Full Panoramic Survey",
-        deskripsi:
-          "Pemeriksaan rutin. Semua gigi bungsu tumbuh dengan benar. Tidak ada tanda-tanda",
-        fotoKeys: ["rontgen_xray", "intraoral"],
-        foto: null,
-        no: "006",
-        umur: "35 th",
-        dokter: "Dr. Ani Rahayu",
-        notes: "Pemeriksaan rutin. Semua gigi bungsu tumbuh dengan benar.",
-        fotoRontgen: "2",
-        fotoProfil: "0",
-        fotoIntraoral: "2",
-      },
-    ],
-  },
-  {
-    tanggal: "YESTERDAY, OCT 23",
-    items: [
-      {
-        id: 3,
-        nama: "Siti Rahayu",
-        jam: "04:45 PM",
-        judul: "Orthodontic Progress Scan",
-        deskripsi:
-          "Penyelarasan berjalan sesuai harapan. Penyesuaian berikutnya dijadwalkan untuk 3...",
-        fotoKeys: ["rontgen_xray", "profil_gigi", "intraoral"],
-        foto: null,
-        no: "002",
-        umur: "25 th",
-        dokter: "Dr. Cahyo Prabowo",
-        notes:
-          "Penyelarasan berjalan sesuai harapan. Penyesuaian berikutnya dijadwalkan 3 bulan lagi.",
-        fotoRontgen: "1",
-        fotoProfil: "2",
-        fotoIntraoral: "1",
-      },
-      {
-        id: 4,
-        nama: "Dewi Lestari",
-        jam: "11:00 AM",
-        judul: "Emergency Root Canal Scan",
-        deskripsi:
-          "Infeksi yang terlihat di ujung gigi #14. Urgensi tinggi untuk prosedur.",
-        fotoKeys: ["rontgen_xray", "intraoral"],
-        foto: null,
-        no: "005",
-        umur: "25 th",
-        dokter: "Dr. Budi Setiawan",
-        notes:
-          "Infeksi yang terlihat di ujung gigi #14. Urgensi tinggi untuk prosedur.",
-        fotoRontgen: "3",
-        fotoProfil: "0",
-        fotoIntraoral: "2",
-      },
-    ],
-  },
-];
-
 const timeFilters = ["All Time", "Today", "This Week"];
 
 export default function Rontgen() {
@@ -181,9 +60,88 @@ export default function Rontgen() {
   const [search, setSearch] = useState("");
   const scrollY = useSharedValue(0);
 
+  // Data dari API
+  const [pasienRontgen, setPasienRontgen] = useState<any[]>([]);
+  const [historyData, setHistoryData] = useState<any[]>([]);
+  const [loading, setLoading] = useState(false);
+
   useEffect(() => {
     if (params.tab === "history") setActiveTab("history");
   }, [params.tab]);
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const fetchData = async () => {
+    setLoading(true);
+    try {
+      // Ambil yang perlu upload foto
+      const perluUpload = await getRontgenList("perlu_upload_foto");
+      if (perluUpload.success && perluUpload.data?.rontgens) {
+        const list = perluUpload.data.rontgens.map((r: any) => ({
+          id: r.id,
+          nama: r.patient?.name || "-",
+          no: String(r.id).padStart(3, "0"),
+          jam: "-",
+          umur: "-",
+          fotoKeys: ["rontgen_xray", "profil_gigi", "intraoral"],
+          patientId: r.patient?.id,
+          doctorId: r.doctor?.id,
+        }));
+        setPasienRontgen(list);
+      }
+
+      // Ambil semua rontgen untuk history
+      const allRontgen = await getRontgenList();
+      if (allRontgen.success && allRontgen.data?.rontgens) {
+        // Group by tanggal
+        const grouped: Record<string, any[]> = {};
+        allRontgen.data.rontgens.forEach((r: any) => {
+          const tgl = r.created_at?.split(" ")[0] || "Unknown";
+          if (!grouped[tgl]) grouped[tgl] = [];
+          grouped[tgl].push(r);
+        });
+
+        const history = Object.entries(grouped).map(([tgl, items]) => ({
+          tanggal: tgl,
+          items: items.map((r: any) => ({
+            id: r.id,
+            nama: r.patient?.name || "-",
+            jam: r.created_at?.split(" ")[1]?.slice(0, 5) || "-",
+            judul: r.detail || "Pemeriksaan",
+            deskripsi: r.detail || "-",
+            fotoKeys: [...new Set(r.tags?.map((t: any) => t.tag_name) || [])],
+            foto: r.latest_image_url || null,
+            no: String(r.id).padStart(3, "0"),
+            umur: "-",
+            dokter: r.doctor?.name || "-",
+            notes: r.detail || "",
+            fotoRontgen: String(
+              r.examination_images?.filter((i: any) => i.image_type === "xray")
+                .length || 0,
+            ),
+            fotoProfil: String(
+              r.examination_images?.filter(
+                (i: any) => i.image_type === "profil_gigi",
+              ).length || 0,
+            ),
+            fotoIntraoral: String(
+              r.examination_images?.filter(
+                (i: any) => i.image_type === "intraoral",
+              ).length || 0,
+            ),
+            rontgenId: r.id,
+          })),
+        }));
+        setHistoryData(history);
+      }
+    } catch (error) {
+      console.log("Error fetch rontgen:", error);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const scrollHandler = useAnimatedScrollHandler({
     onScroll: (event) => {
@@ -191,20 +149,24 @@ export default function Rontgen() {
     },
   });
 
-  const headerStyle = useAnimatedStyle(() => {
-    const translateY = interpolate(
-      scrollY.value,
-      [0, PARALLAX_DISTANCE],
-      [0, -PARALLAX_DISTANCE],
-      "clamp",
-    );
-    return { transform: [{ translateY }] };
-  });
+  const headerStyle = useAnimatedStyle(() => ({
+    transform: [
+      {
+        translateY: interpolate(
+          scrollY.value,
+          [0, PARALLAX_DISTANCE],
+          [0, -PARALLAX_DISTANCE],
+          "clamp",
+        ),
+      },
+    ],
+  }));
 
-  const goToExamDetails = (item: (typeof historyData)[0]["items"][0]) => {
+  const goToExamDetails = (item: any) => {
     router.push({
       pathname: "/(admin)/ExamDetails",
       params: {
+        rontgenId: item.rontgenId,
         nama: item.nama,
         no: item.no,
         jam: item.jam,
@@ -274,167 +236,49 @@ export default function Rontgen() {
               />
               <Text style={styles.tipsText}>
                 Pasien berikut telah direkomendasikan dokter untuk dilakukan
-                upload foto (Rontgen/ Profil Gigi / Intraoral).
+                foto rontgen.
               </Text>
             </View>
 
-            <View style={styles.listWrapper}>
-              {pasienRontgen.map((pasien) => (
-                <TouchableOpacity
-                  key={pasien.id}
-                  style={styles.card}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.avatar}>
-                    <Ionicons name="person" size={24} color="#2E9DA4" />
-                  </View>
-                  <View style={styles.info}>
-                    <Text style={styles.nama}>{pasien.nama}</Text>
-                    <Text style={styles.sub}>
-                      No. {pasien.no} · {pasien.jam} · {pasien.umur}
-                    </Text>
-                    {/* ✅ Foto tag icons */}
-                    <View style={styles.tagRow}>
-                      {pasien.fotoKeys.map((key) => {
-                        const icon = getFotoIcon(key);
-                        const color = fotoTagColor[key] || {
-                          bg: "#E2F0F1",
-                          text: "#34B3B9",
-                        };
-                        return (
-                          <View
-                            key={key}
-                            style={[
-                              styles.fotoTag,
-                              { backgroundColor: color.bg },
-                            ]}
-                          >
-                            {icon && (
-                              <Image
-                                source={icon}
-                                style={[
-                                  styles.fotoTagIcon,
-                                  { tintColor: color.text },
-                                ]}
-                                resizeMode="contain"
-                              />
-                            )}
-                            <Text
-                              style={[
-                                styles.fotoTagText,
-                                { color: color.text },
-                              ]}
-                            >
-                              {fotoLabel[key]}
-                            </Text>
-                          </View>
-                        );
-                      })}
-                    </View>
-                  </View>
-                  <View style={styles.rontgenIcon}>
-                    <Image
-                      source={require("../../../assets/icons/camera.png")}
-                      style={styles.cameraIcon}
-                    />
-                  </View>
-                </TouchableOpacity>
-              ))}
-            </View>
-          </View>
-        )}
-
-        {/* ============ TAB HISTORY ============ */}
-        {activeTab === "history" && (
-          <View>
-            <Text style={styles.pageTitle}>Examination History</Text>
-
-            <View style={styles.searchRow}>
-              <View style={styles.searchWrapper}>
-                <Ionicons name="search-outline" size={16} color="#aaa" />
-                <TextInput
-                  style={styles.searchInput}
-                  placeholder="Search patients..."
-                  placeholderTextColor="#aaa"
-                  value={search}
-                  onChangeText={setSearch}
-                />
-              </View>
-              <TouchableOpacity style={styles.filterBtn}>
-                <Ionicons name="options-outline" size={20} color="#555" />
-              </TouchableOpacity>
-            </View>
-
-            <ScrollView
-              horizontal
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={styles.timeFilterWrapper}
-            >
-              {timeFilters.map((f) => (
-                <TouchableOpacity
-                  key={f}
-                  style={[
-                    styles.timeBtn,
-                    activeTime === f && styles.timeBtnActive,
-                  ]}
-                  onPress={() => setActiveTime(f)}
-                >
-                  <Text
-                    style={[
-                      styles.timeBtnText,
-                      activeTime === f && styles.timeBtnTextActive,
-                    ]}
-                  >
-                    {f}
-                  </Text>
-                </TouchableOpacity>
-              ))}
-            </ScrollView>
-
-            {historyData.map((group, gIndex) => (
-              <View key={gIndex}>
-                <Text style={styles.groupDate}>{group.tanggal}</Text>
-                {group.items.map((item) => (
+            {loading ? (
+              <Text style={styles.emptyText}>Loading...</Text>
+            ) : pasienRontgen.length === 0 ? (
+              <Text style={styles.emptyText}>
+                Tidak ada pasien yang perlu upload foto
+              </Text>
+            ) : (
+              <View style={styles.listWrapper}>
+                {pasienRontgen.map((pasien) => (
                   <TouchableOpacity
-                    key={item.id}
-                    style={styles.historyCard}
-                    onPress={() => goToExamDetails(item)}
+                    key={pasien.id}
+                    style={styles.card}
                     activeOpacity={0.7}
+                    onPress={() =>
+                      router.push({
+                        pathname: "/(admin)/Uploadfotopasien",
+                        params: {
+                          nama: pasien.nama,
+                          no: pasien.no,
+                          jam: pasien.jam,
+                          umur: pasien.umur,
+                          fotoKeys: pasien.fotoKeys.join(","),
+                          rontgenId: String(pasien.id),
+                          patientId: String(pasien.patientId),
+                          doctorId: String(pasien.doctorId),
+                        },
+                      })
+                    }
                   >
-                    {/* Foto thumbnail */}
-                    <View style={styles.fotoWrapper}>
-                      {item.foto ? (
-                        <Image
-                          source={{ uri: item.foto }}
-                          style={styles.foto}
-                          resizeMode="cover"
-                        />
-                      ) : (
-                        <View style={styles.fotoPlaceholder}>
-                          <Ionicons
-                            name="image-outline"
-                            size={28}
-                            color="#aaa"
-                          />
-                        </View>
-                      )}
+                    <View style={styles.avatar}>
+                      <Ionicons name="person" size={24} color="#2E9DA4" />
                     </View>
-
-                    <View
-                      style={[styles.info, { justifyContent: "space-between" }]}
-                    >
-                      <View style={styles.namaRow}>
-                        <Text style={styles.nama}>{item.nama}</Text>
-                        <Text style={styles.jam}>{item.jam}</Text>
-                      </View>
-                      <Text style={styles.judul}>{item.judul}</Text>
-                      <Text style={styles.deskripsi} numberOfLines={2}>
-                        {item.deskripsi}
+                    <View style={styles.info}>
+                      <Text style={styles.nama}>{pasien.nama}</Text>
+                      <Text style={styles.sub}>
+                        No. {pasien.no} · {pasien.jam} · {pasien.umur}
                       </Text>
-
-                      {/* ✅ Foto tag icons di history */}
                       <View style={styles.tagRow}>
-                        {item.fotoKeys.map((key) => {
+                        {pasien.fotoKeys.map((key: string) => {
                           const icon = getFotoIcon(key);
                           const color = fotoTagColor[key] || {
                             bg: "#E2F0F1",
@@ -471,10 +315,172 @@ export default function Rontgen() {
                         })}
                       </View>
                     </View>
+                    <View style={styles.rontgenIcon}>
+                      <Image
+                        source={require("../../../assets/icons/camera.png")}
+                        style={styles.cameraIcon}
+                      />
+                    </View>
                   </TouchableOpacity>
                 ))}
               </View>
-            ))}
+            )}
+          </View>
+        )}
+
+        {/* ============ TAB HISTORY ============ */}
+        {activeTab === "history" && (
+          <View>
+            <Text style={styles.pageTitle}>Examination History</Text>
+
+            {/* Search + Filter */}
+            <View style={styles.searchRow}>
+              <View style={styles.searchWrapper}>
+                <Ionicons name="search-outline" size={16} color="#aaa" />
+                <TextInput
+                  style={styles.searchInput}
+                  placeholder="Search patients..."
+                  placeholderTextColor="#aaa"
+                  value={search}
+                  onChangeText={setSearch}
+                />
+              </View>
+              <TouchableOpacity style={styles.filterBtn}>
+                <Ionicons name="options-outline" size={20} color="#555" />
+              </TouchableOpacity>
+            </View>
+
+            {/* Time Filter */}
+            <ScrollView
+              horizontal
+              showsHorizontalScrollIndicator={false}
+              contentContainerStyle={styles.timeFilterWrapper}
+            >
+              {timeFilters.map((f) => (
+                <TouchableOpacity
+                  key={f}
+                  style={[
+                    styles.timeBtn,
+                    activeTime === f && styles.timeBtnActive,
+                  ]}
+                  onPress={() => setActiveTime(f)}
+                >
+                  <Text
+                    style={[
+                      styles.timeBtnText,
+                      activeTime === f && styles.timeBtnTextActive,
+                    ]}
+                  >
+                    {f}
+                  </Text>
+                </TouchableOpacity>
+              ))}
+            </ScrollView>
+
+            {loading ? (
+              <Text style={styles.emptyText}>Loading...</Text>
+            ) : historyData.length === 0 ? (
+              <Text style={styles.emptyText}>Belum ada history rontgen</Text>
+            ) : (
+              historyData.map((group, gIndex) => (
+                <View key={gIndex}>
+                  <Text style={styles.groupDate}>{group.tanggal}</Text>
+                  {group.items
+                    .filter(
+                      (item: any) =>
+                        search === "" ||
+                        item.nama.toLowerCase().includes(search.toLowerCase()),
+                    )
+                    .map((item: any) => (
+                      <TouchableOpacity
+                        key={item.id}
+                        style={styles.historyCard}
+                        onPress={() => goToExamDetails(item)}
+                        activeOpacity={0.7}
+                      >
+                        <View style={styles.fotoWrapper}>
+                          {item.foto ? (
+                            <Image
+                              source={{ uri: item.foto }}
+                              style={styles.foto}
+                              resizeMode="cover"
+                            />
+                          ) : (
+                            <View style={styles.fotoPlaceholder}>
+                              <Ionicons
+                                name="image-outline"
+                                size={28}
+                                color="#aaa"
+                              />
+                            </View>
+                          )}
+                        </View>
+
+                        <View
+                          style={[
+                            styles.info,
+                            { justifyContent: "space-between" },
+                          ]}
+                        >
+                          <View style={styles.namaRow}>
+                            <Text style={styles.nama}>{item.nama}</Text>
+                            <Text style={styles.jam}>{item.jam}</Text>
+                          </View>
+                          <Text style={styles.judul}>{item.judul}</Text>
+                          <Text style={styles.deskripsi} numberOfLines={2}>
+                            {item.deskripsi}
+                          </Text>
+                          <View style={styles.tagRow}>
+                            {["rontgen_xray", "profil_gigi", "intraoral"]
+                              .filter(
+                                (key) =>
+                                  Number(
+                                    key === "rontgen_xray"
+                                      ? item.fotoRontgen
+                                      : key === "profil_gigi"
+                                        ? item.fotoProfil
+                                        : item.fotoIntraoral,
+                                  ) > 0,
+                              )
+                              .map((key) => {
+                                const icon = getFotoIcon(key);
+                                const color = fotoTagColor[key];
+                                return (
+                                  <View
+                                    key={key}
+                                    style={[
+                                      styles.fotoTag,
+                                      { backgroundColor: color.bg },
+                                    ]}
+                                  >
+                                    {icon && (
+                                      <Image
+                                        source={icon}
+                                        style={[
+                                          styles.fotoTagIcon,
+                                          { tintColor: color.text },
+                                        ]}
+                                        resizeMode="contain"
+                                      />
+                                    )}
+                                    <Text
+                                      style={[
+                                        styles.fotoTagText,
+                                        { color: color.text },
+                                      ]}
+                                    >
+                                      {fotoLabel[key]}
+                                    </Text>
+                                  </View>
+                                );
+                              })}
+                          </View>
+                        </View>
+                      </TouchableOpacity>
+                    ))}
+                </View>
+              ))
+            )}
           </View>
         )}
       </Animated.ScrollView>
@@ -646,4 +652,10 @@ const styles = StyleSheet.create({
   jam: { fontSize: 11, color: "#888" },
   judul: { fontSize: 12, color: "#2E9DA4", fontWeight: "600" },
   deskripsi: { fontSize: 11, color: "#666", lineHeight: 16 },
+  emptyText: {
+    textAlign: "center",
+    color: "#aaa",
+    marginTop: 40,
+    fontSize: 14,
+  },
 });

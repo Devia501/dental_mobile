@@ -1,9 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import * as ImagePicker from "expo-image-picker";
 import { router, useLocalSearchParams } from "expo-router";
-import { useState } from "react";
-import StatusBerhasil from "../../components/beranda/Statusberhasil";
+import { useEffect, useState } from "react";
 import {
+  ActivityIndicator,
   Dimensions,
   Image,
   ScrollView,
@@ -14,18 +14,21 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import StatusBerhasil from "../../components/beranda/Statusberhasil";
+import { getRontgenDetail } from "../../services/rontgenService";
 
 const { width: W } = Dimensions.get("window");
+const FOTO_W = (W - 32 - 10) / 2;
 
 const fotoSectionsConfig = [
   {
-    key: "rontgen",
+    key: "xray",
     label: "Rontgen (X-Ray)",
     badgeColor: "#34B3B9",
     placeholderBg: "#D0E8E8",
   },
   {
-    key: "profil",
+    key: "profil_gigi",
     label: "PROFIL GIGI",
     badgeColor: "#7B8DE8",
     placeholderBg: "#EDEEFF",
@@ -38,57 +41,137 @@ const fotoSectionsConfig = [
   },
 ];
 
-const ALL_TAGS = [
-  "#Caries",
-  "#RoutineExam",
-  "#FollowUpReq",
-  "#RootCanal",
-  "#WisdomTooth",
-];
-
 export default function ExamDetails() {
   const insets = useSafeAreaInsets();
   const params = useLocalSearchParams();
 
-  // ━━━━━ Mode edit ━━━━━
+  const rontgenId = Number(params.rontgenId) || 0;
+
+  // Mode edit
   const [isEditing, setIsEditing] = useState(false);
+  const [loadingData, setLoadingData] = useState(true);
 
-  // ━━━━━ Data ━━━━━
-  const [nama, setNama] = useState((params.nama as string) || "Ahmad Fauzi");
-  const [umur, setUmur] = useState("28 Years Old · Male");
-  const [dokter, setDokter] = useState((params.dokter as string) || "Dr. Budi");
-  const [examDate, setExamDate] = useState("24 Oct 2025");
-  const [examTime, setExamTime] = useState("14:30 PM");
-  const [notes, setNotes] = useState(
-    (params.notes as string) ||
-      "Patient presented with localized pain in the lower right quadrant. X-ray indicates vertical bone loss around tooth #31 and #32. Possible distal caries detected on #46.\n\nRecommended follow-up: Deep cleaning (scaling and root planing) and possible composite filling for #46. Patient advised to monitor sensitivity levels over the next 48 hours.",
-  );
-  const [field1, setField1] = useState((params.field1 as string) || "");
-  const [field2, setField2] = useState((params.field2 as string) || "");
-  const [field3, setField3] = useState((params.field3 as string) || "");
+  // Data dari API
+  const [nama, setNama] = useState((params.nama as string) || "-");
+  const [umur, setUmur] = useState("-");
+  const [gender, setGender] = useState("-");
+  const [dokter, setDokter] = useState((params.dokter as string) || "-");
+  const [spesialisasi, setSpesialisasi] = useState("-");
+  const [examDate, setExamDate] = useState("-");
+  const [examTime, setExamTime] = useState((params.jam as string) || "-");
+  const [notes, setNotes] = useState((params.notes as string) || "");
+  const [field1, setField1] = useState("");
+  const [field2, setField2] = useState("");
+  const [field3, setField3] = useState("");
+  const [status, setStatus] = useState("-");
 
-  // ━━━━━ Tags ━━━━━
-  const [selectedTags, setSelectedTags] = useState<string[]>([
-    "#Caries",
-    "#RoutineExam",
-    "#FollowUpReq",
-  ]);
+  // Tags dari API
+  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+
+  // Foto dari API — key: image_type, value: array of image_url
+  const [fotos, setFotos] = useState<Record<string, string[]>>({
+    xray: [],
+    profil_gigi: [],
+    intraoral: [],
+  });
+
+  const [showError, setShowError] = useState(false);
+  const [showSuccess, setShowSuccess] = useState(false);
+
+  useEffect(() => {
+    if (rontgenId) {
+      fetchDetail();
+    } else {
+      // Kalau tidak ada rontgenId, pakai data dari params
+      setLoadingData(false);
+      setFotos({
+        xray: Array.from(
+          { length: Number(params.fotoRontgen) || 0 },
+          () => "placeholder",
+        ),
+        profil_gigi: Array.from(
+          { length: Number(params.fotoProfil) || 0 },
+          () => "placeholder",
+        ),
+        intraoral: Array.from(
+          { length: Number(params.fotoIntraoral) || 0 },
+          () => "placeholder",
+        ),
+      });
+    }
+  }, [rontgenId]);
+
+  const fetchDetail = async () => {
+    setLoadingData(true);
+    try {
+      const res = await getRontgenDetail(rontgenId);
+      if (res.success && res.data) {
+        const d = res.data;
+
+        // Patient info
+        setNama(d.patient?.name || "-");
+        setUmur(
+          d.patient?.birth_date
+            ? `${calculateAge(d.patient.birth_date)} Years Old`
+            : "-",
+        );
+        setGender(
+          d.patient?.gender === "female"
+            ? "Female"
+            : d.patient?.gender === "male"
+              ? "Male"
+              : "-",
+        );
+
+        // Doctor info
+        setDokter(d.doctor?.name || "-");
+        setSpesialisasi(d.doctor?.specialization || "-");
+
+        // Exam info
+        setExamDate(d.created_at?.split(" ")[0] || "-");
+        setExamTime(d.created_at?.split(" ")[1]?.slice(0, 5) || "-");
+        setNotes(d.detail || "");
+        setStatus(d.status || "-");
+
+        // Tags
+        setSelectedTags(d.tags?.map((t: any) => `#${t.tag_name}`) || []);
+
+        // Foto — group by image_type
+        const fotoByType: Record<string, string[]> = {
+          xray: [],
+          profil_gigi: [],
+          intraoral: [],
+        };
+        d.examination_images?.forEach((img: any) => {
+          const key =
+            img.image_type === "xray"
+              ? "xray"
+              : img.image_type === "profil_gigi"
+                ? "profil_gigi"
+                : "intraoral";
+          if (img.image_url) fotoByType[key].push(img.image_url);
+        });
+        setFotos(fotoByType);
+      }
+    } catch (error) {
+      console.log("Error fetch detail:", error);
+    } finally {
+      setLoadingData(false);
+    }
+  };
+
+  const calculateAge = (birthDate: string) => {
+    const birth = new Date(birthDate);
+    const today = new Date();
+    return today.getFullYear() - birth.getFullYear();
+  };
+
   const toggleTag = (tag: string) => {
     if (!isEditing) return;
     setSelectedTags((prev) =>
       prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
     );
   };
-
-  // ━━━━━ Foto ━━━━━
-  const initFotos = (count: number) =>
-    Array.from({ length: Math.max(count, 0) }, () => "placeholder");
-
-  const [fotos, setFotos] = useState<Record<string, string[]>>({
-    rontgen: initFotos(Number(params.fotoRontgen) || 2),
-    profil: initFotos(Number(params.fotoProfil) || 1),
-    intraoral: initFotos(Number(params.fotoIntraoral) || 3),
-  });
 
   const gantiFoto = async (sectionKey: string, index: number) => {
     if (!isEditing) return;
@@ -113,39 +196,47 @@ export default function ExamDetails() {
     }));
   };
 
-  // ━━━━━ Error & Save ━━━━━
-  const [showError, setShowError] = useState(false);
-  const [showSuccess, setShowSuccess] = useState(false);
-
   const handleSaveChanges = () => {
-    if (!nama.trim() || !dokter.trim() || !notes.trim()) {
+    if (!nama.trim() || !dokter.trim()) {
       setShowError(true);
       return;
     }
     setShowError(false);
     setIsEditing(false);
-    // ✅ Tampilkan animasi sukses
     setShowSuccess(true);
   };
 
   const handleSuccessDone = () => {
     setShowSuccess(false);
-    // ✅ Navigate ke rontgen history
     router.replace({
       pathname: "/(admin)/(tabs)/rontgen",
       params: { tab: "history" },
     });
   };
 
+  if (loadingData) {
+    return (
+      <View
+        style={[
+          styles.container,
+          { justifyContent: "center", alignItems: "center" },
+        ]}
+      >
+        <ActivityIndicator size="large" color="#34B3B9" />
+        <Text style={{ color: "#888", marginTop: 12 }}>Memuat data...</Text>
+      </View>
+    );
+  }
+
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* ✅ Animasi Edit Record Berhasil */}
       <StatusBerhasil
         visible={showSuccess}
         title="Edit Record Berhasil!"
         subtitle="Perubahan telah tersimpan ke sistem"
         onDone={handleSuccessDone}
       />
+
       {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
@@ -159,7 +250,7 @@ export default function ExamDetails() {
         showsVerticalScrollIndicator={false}
         contentContainerStyle={{ paddingBottom: isEditing ? 20 : 40 }}
       >
-        {/* ━━━━━━━━━━━ FOTO SECTIONS ━━━━━━━━━━━ */}
+        {/* ━━━━━ FOTO SECTIONS ━━━━━ */}
         {fotoSectionsConfig.map((section) => {
           const photos = fotos[section.key] || [];
           if (photos.length === 0 && !isEditing) return null;
@@ -201,7 +292,6 @@ export default function ExamDetails() {
                       />
                     )}
 
-                    {/* Mode view — fullscreen icon */}
                     {!isEditing && (
                       <View style={styles.fullscreenIcon}>
                         <Ionicons
@@ -212,7 +302,6 @@ export default function ExamDetails() {
                       </View>
                     )}
 
-                    {/* Mode edit — hapus + ganti */}
                     {isEditing && (
                       <>
                         <TouchableOpacity
@@ -232,9 +321,7 @@ export default function ExamDetails() {
                             size={10}
                             color="#fff"
                           />
-                          <Text style={styles.gantiText}>
-                            Ganti Foto Rontgen
-                          </Text>
+                          <Text style={styles.gantiText}>Ganti Foto</Text>
                         </View>
                       </>
                     )}
@@ -245,10 +332,9 @@ export default function ExamDetails() {
           );
         })}
 
-        {/* ━━━━━━━━━━━ PATIENT PROFILE ━━━━━━━━━━━ */}
+        {/* ━━━━━ PATIENT PROFILE ━━━━━ */}
         <View style={styles.sectionWrapper}>
           <Text style={styles.sectionTitle}>PATIENT PROFILE</Text>
-
           <View style={styles.patientCard}>
             <View style={styles.patientAvatar}>
               <Ionicons name="person-outline" size={28} color="#2E9DA4" />
@@ -263,63 +349,20 @@ export default function ExamDetails() {
               ) : (
                 <Text style={styles.patientName}>{nama}</Text>
               )}
-              {isEditing ? (
-                <TextInput
-                  style={[styles.editInput, { fontSize: 12, color: "#888" }]}
-                  value={umur}
-                  onChangeText={setUmur}
-                />
-              ) : (
-                <Text style={styles.patientSub}>{umur}</Text>
-              )}
+              <Text style={styles.patientSub}>
+                {umur} · {gender}
+              </Text>
             </View>
-            {isEditing && (
-              <Ionicons name="pencil-outline" size={18} color="#aaa" />
-            )}
           </View>
         </View>
 
-        {/* Exam Date + Performed By */}
+        {/* ━━━━━ INFO ROW ━━━━━ */}
         <View style={styles.infoRow}>
+          {/* Dokter */}
           <View style={styles.infoCard}>
             <View style={styles.infoIconRow}>
-              <Ionicons name="calendar-outline" size={14} color="#34B3B9" />
-              <Text style={styles.infoLabel}>EXAM DATE</Text>
-            </View>
-            {isEditing ? (
-              <>
-                <TextInput
-                  style={styles.editInput}
-                  value={examDate}
-                  onChangeText={setExamDate}
-                />
-                <TextInput
-                  style={[styles.editInput, { fontSize: 12 }]}
-                  value={examTime}
-                  onChangeText={setExamTime}
-                />
-              </>
-            ) : (
-              <>
-                <Text style={styles.infoValue}>{examDate}</Text>
-                <Text style={styles.infoSub}>{examTime}</Text>
-              </>
-            )}
-            {isEditing && (
-              <View style={styles.infoEditIcon}>
-                <Ionicons name="pencil-outline" size={16} color="#aaa" />
-              </View>
-            )}
-          </View>
-
-          <View style={styles.infoCard}>
-            <View style={styles.infoIconRow}>
-              <Ionicons
-                name="person-circle-outline"
-                size={14}
-                color="#34B3B9"
-              />
-              <Text style={styles.infoLabel}>PERFORMED BY</Text>
+              <Ionicons name="medical-outline" size={14} color="#34B3B9" />
+              <Text style={styles.infoLabel}>DOKTER</Text>
             </View>
             {isEditing ? (
               <TextInput
@@ -330,24 +373,40 @@ export default function ExamDetails() {
             ) : (
               <Text style={styles.infoValue}>{dokter}</Text>
             )}
-            <Text style={styles.infoSub}>Specialist</Text>
-            {isEditing && (
-              <View style={styles.infoEditIcon}>
-                <Ionicons name="pencil-outline" size={16} color="#aaa" />
-              </View>
-            )}
+            <Text style={styles.infoSub}>{spesialisasi}</Text>
+          </View>
+
+          {/* Tanggal & Jam */}
+          <View style={styles.infoCard}>
+            <View style={styles.infoIconRow}>
+              <Ionicons name="calendar-outline" size={14} color="#34B3B9" />
+              <Text style={styles.infoLabel}>TANGGAL</Text>
+            </View>
+            <Text style={styles.infoValue}>{examDate}</Text>
+            <Text style={styles.infoSub}>{examTime}</Text>
           </View>
         </View>
 
-        {/* ━━━━━━━━━━━ CLINICAL NOTES ━━━━━━━━━━━ */}
+        {/* Status */}
+        <View style={styles.sectionWrapper}>
+          <View style={styles.infoCard}>
+            <View style={styles.infoIconRow}>
+              <Ionicons
+                name="checkmark-circle-outline"
+                size={14}
+                color="#34B3B9"
+              />
+              <Text style={styles.infoLabel}>STATUS</Text>
+            </View>
+            <Text style={styles.infoValue}>{status}</Text>
+          </View>
+        </View>
+
+        {/* ━━━━━ CLINICAL NOTES ━━━━━ */}
         <View style={styles.sectionWrapper}>
           <View style={styles.clinicalHeader}>
             <Text style={styles.sectionTitle}>CLINICAL NOTES</Text>
-            {isEditing ? (
-              <Text style={styles.editNotesLabel}>Edit Notes</Text>
-            ) : (
-              <Ionicons name="menu-outline" size={20} color="#888" />
-            )}
+            {isEditing && <Text style={styles.editNotesLabel}>Edit Mode</Text>}
           </View>
           {isEditing ? (
             <TextInput
@@ -359,12 +418,14 @@ export default function ExamDetails() {
             />
           ) : (
             <View style={styles.notesCard}>
-              <Text style={styles.notesText}>{notes}</Text>
+              <Text style={styles.notesText}>
+                {notes || "Tidak ada catatan klinis"}
+              </Text>
             </View>
           )}
         </View>
 
-        {/* ━━━━━━━━━━━ ADD FIELDS ━━━━━━━━━━━ */}
+        {/* ━━━━━ TAMBAHAN FIELD ━━━━━ */}
         <View style={styles.sectionWrapper}>
           <View style={styles.addFieldRow}>
             <View style={styles.addFieldGroup}>
@@ -377,10 +438,7 @@ export default function ExamDetails() {
                     onChangeText={setField1}
                   />
                 ) : (
-                  <Text style={styles.addFieldValue}>{field1}</Text>
-                )}
-                {isEditing && (
-                  <Ionicons name="pencil-outline" size={14} color="#aaa" />
+                  <Text style={styles.addFieldValue}>{field1 || "-"}</Text>
                 )}
               </View>
             </View>
@@ -394,121 +452,73 @@ export default function ExamDetails() {
                     onChangeText={setField2}
                   />
                 ) : (
-                  <Text style={styles.addFieldValue}>{field2}</Text>
-                )}
-                {isEditing && (
-                  <Ionicons name="pencil-outline" size={14} color="#aaa" />
+                  <Text style={styles.addFieldValue}>{field2 || "-"}</Text>
                 )}
               </View>
             </View>
           </View>
-
-          <Text style={styles.addFieldLabel}>Add Field</Text>
-          <View style={[styles.addFieldBox, { minHeight: 60 }]}>
-            {isEditing ? (
-              <TextInput
-                style={[styles.addFieldInput, { flex: 1 }]}
-                value={field3}
-                onChangeText={setField3}
-                multiline
-                textAlignVertical="top"
-              />
-            ) : (
-              <Text style={styles.addFieldValue}>{field3}</Text>
-            )}
-            {isEditing && (
-              <Ionicons name="pencil-outline" size={14} color="#aaa" />
-            )}
-          </View>
         </View>
 
-        {/* ━━━━━━━━━━━ TAGS ━━━━━━━━━━━ */}
+        {/* ━━━━━ TAGS ━━━━━ */}
         <View style={styles.tagSection}>
           <Text style={styles.sectionTitle}>TAGS</Text>
           <View style={styles.tagRow}>
-            {(isEditing ? ALL_TAGS : selectedTags).map((tag) => {
-              const active = selectedTags.includes(tag);
-              return (
+            {selectedTags.length === 0 ? (
+              <Text style={{ color: "#aaa", fontSize: 13 }}>Tidak ada tag</Text>
+            ) : (
+              selectedTags.map((tag) => (
                 <TouchableOpacity
                   key={tag}
-                  style={[styles.tagChip, active && styles.tagChipActive]}
+                  style={[styles.tagChip, styles.tagChipActive]}
                   onPress={() => toggleTag(tag)}
-                  activeOpacity={isEditing ? 0.7 : 1}
                 >
-                  <Text
-                    style={[
-                      styles.tagChipText,
-                      active && styles.tagChipTextActive,
-                    ]}
-                  >
-                    {tag}
-                  </Text>
-                  {isEditing && active && (
-                    <Ionicons
-                      name="close-circle"
-                      size={14}
-                      color="#34B3B9"
-                      style={{ marginLeft: 2 }}
-                    />
-                  )}
+                  <Text style={styles.tagChipTextActive}>{tag}</Text>
                 </TouchableOpacity>
-              );
-            })}
+              ))
+            )}
           </View>
         </View>
 
-        {/* ━━━━━━━━━━━ ERROR ━━━━━━━━━━━ */}
+        {/* Error */}
         {showError && (
           <View style={styles.errorBox}>
-            <Ionicons
-              name="information-circle-outline"
-              size={16}
-              color="#e05c5c"
-            />
+            <Ionicons name="alert-circle-outline" size={18} color="#e05c5c" />
             <Text style={styles.errorText}>
-              Pastikan semua terisi dengan benar!
+              Nama dan dokter tidak boleh kosong
             </Text>
           </View>
         )}
 
-        {/* ━━━━━━━━━━━ BUTTONS (view mode) ━━━━━━━━━━━ */}
-        {!isEditing && (
+        {/* ━━━━━ BUTTONS ━━━━━ */}
+        {!isEditing ? (
           <View style={styles.btnWrapper}>
             <TouchableOpacity style={styles.printBtn}>
-              <Ionicons name="print-outline" size={18} color="#fff" />
-              <Text style={styles.printBtnText}>Print Full Report (PDF)</Text>
+              <Ionicons name="print-outline" size={20} color="#fff" />
+              <Text style={styles.printBtnText}>Print / Export PDF</Text>
             </TouchableOpacity>
             <TouchableOpacity
               style={styles.editRecordBtn}
               onPress={() => setIsEditing(true)}
             >
-              <Ionicons name="pencil-outline" size={16} color="#A66C64" />
+              <Ionicons name="create-outline" size={18} color="#A66C64" />
               <Text style={styles.editRecordBtnText}>Edit Record</Text>
             </TouchableOpacity>
           </View>
+        ) : (
+          <View style={styles.saveWrapper}>
+            <TouchableOpacity
+              style={styles.saveBtn}
+              onPress={handleSaveChanges}
+            >
+              <Ionicons name="save-outline" size={20} color="#fff" />
+              <Text style={styles.saveBtnText}>Save Changes</Text>
+            </TouchableOpacity>
+          </View>
         )}
-
-        {/* ━━━━━━━━━━━ SAVE CHANGES (edit mode) ━━━━━━━━━━━ */}
-      {isEditing && (
-        <View
-          style={[styles.saveWrapper, { paddingBottom: insets.bottom + 12 }]}
-        >
-          <TouchableOpacity
-            style={styles.saveBtn}
-            onPress={handleSaveChanges}
-            activeOpacity={0.8}
-          >
-            <Ionicons name="pencil-outline" size={18} color="#fff" />
-            <Text style={styles.saveBtnText}>Save Changes</Text>
-          </TouchableOpacity>
-        </View>
-      )}
       </ScrollView>
     </View>
   );
 }
-
-const FOTO_W = (W - 52) / 2;
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#E2F0F1" },
@@ -518,13 +528,12 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     paddingHorizontal: 16,
     paddingVertical: 14,
-    backgroundColor: "#E2F0F1",
   },
   backBtn: { width: 36, height: 36, justifyContent: "center" },
   headerTitle: { fontSize: 18, fontWeight: "bold", color: "#1a1a1a" },
 
   // Foto
-  fotoSection: { backgroundColor: "#fff", marginBottom: 12, padding: 16 },
+  fotoSection: { paddingHorizontal: 16, marginBottom: 20 },
   fotoSectionHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
@@ -726,7 +735,7 @@ const styles = StyleSheet.create({
   },
   tagChipActive: { borderColor: "#34B3B9", backgroundColor: "#E2F0F1" },
   tagChipText: { fontSize: 12, color: "#888" },
-  tagChipTextActive: { color: "#34B3B9", fontWeight: "600" },
+  tagChipTextActive: { fontSize: 12, color: "#34B3B9", fontWeight: "600" },
 
   // Error
   errorBox: {
@@ -790,5 +799,11 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.15,
     shadowRadius: 8,
   },
+  emptyText: {
+  textAlign: "center",
+  color: "#aaa",
+  marginTop: 40,
+  fontSize: 14,
+},
   saveBtnText: { fontSize: 15, fontWeight: "bold", color: "#fff" },
 });

@@ -1,13 +1,25 @@
 import { StyleSheet, Text, View } from "react-native";
 
-const stats = [
-  { angka: "6", label: "Hadir", warna: "#4747F7" },
-  { angka: "2", label: "Rontgen", warna: "#E12C2C" },
-  { angka: "1", label: "Selesai", warna: "#379354" },
-  { angka: "1", label: "Di ruangan", warna: "#34B3B9" },
-];
+interface Props {
+  hadir?: number;
+  rontgen?: number;
+  selesai?: number;
+  diRuangan?: number;
+}
 
-export default function StatsGrid() {
+export default function StatsGrid({
+  hadir = 0,
+  rontgen = 0,
+  selesai = 0,
+  diRuangan = 0,
+}: Props) {
+  const stats = [
+    { angka: String(hadir), label: "Hadir", warna: "#4747F7" },
+    { angka: String(rontgen), label: "Rontgen", warna: "#E12C2C" },
+    { angka: String(selesai), label: "Selesai", warna: "#379354" },
+    { angka: String(diRuangan), label: "Di ruangan", warna: "#34B3B9" },
+  ];
+
   return (
     <View style={styles.grid}>
       {stats.map((item, index) => (
@@ -21,6 +33,7 @@ export default function StatsGrid() {
     </View>
   );
 }
+
 
 const styles = StyleSheet.create({
   grid: {

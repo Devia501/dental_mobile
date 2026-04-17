@@ -1,8 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
 import { Image } from "expo-image";
-import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
-import { useCallback, useState } from "react";
+import { router, useLocalSearchParams } from "expo-router";
+import { useEffect, useState } from "react";
 import {
+  ActivityIndicator,
   Dimensions,
   Modal,
   ScrollView,
@@ -15,7 +16,12 @@ import {
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import KameraScreen from "../../components/beranda/KameraScreen";
 import StatusBerhasil from "../../components/beranda/Statusberhasil";
-import { pendingPhotos } from "../../services/galleryState";
+import { galleryState } from "../../services/galleryState";
+import {
+  getDokterList,
+  getTagList,
+  uploadFotoRontgen,
+} from "../../services/rontgenService";
 
 const { width: W } = Dimensions.get("window");
 
@@ -42,9 +48,6 @@ const fotoSections = [
     borderColor: "#B57BDD",
   },
 ];
-
-const dokterList = ["Dr. Budi Setiawan", "Dr. Ani Rahayu", "Dr. Cahyo Prabowo"];
-const tagSuggestions = ["#cavity", "#WisdomTooth", "#Cleaning", "#RootCanal"];
 
 const getFotoTagIcon = (key: string) => {
   try {
@@ -74,6 +77,8 @@ export default function UploadFotoPasien() {
   const fotoKeysRaw =
     (params.fotoKeys as string) || "rontgen_xray,profil_gigi,intraoral";
   const fotoKeys = fotoKeysRaw.split(",").filter(Boolean);
+  const rontgenId = Number(params.rontgenId) || 0;
+  const doctorIdParam = Number(params.doctorId) || 0;
 
   const fotoLabel: Record<string, string> = {
     rontgen_xray: "Rontgen (X-Ray)",
@@ -86,47 +91,58 @@ export default function UploadFotoPasien() {
     intraoral: { bg: "#F3E8FF", text: "#B57BDD" },
   };
 
+  // State
+  const [dokterList, setDokterList] = useState<any[]>([]);
+  const [tagList, setTagList] = useState<any[]>([]);
   const [selectedDokter, setSelectedDokter] = useState("");
+  const [selectedDokterObj, setSelectedDokterObj] = useState<any>(null);
   const [showDokterDropdown, setShowDokterDropdown] = useState(false);
   const [notes, setNotes] = useState("");
   const [field1, setField1] = useState("");
   const [field2, setField2] = useState("");
   const [field3, setField3] = useState("");
-
+  const [selectedTags, setSelectedTags] = useState<number[]>([]);
   const [kameraVisible, setKameraVisible] = useState(false);
   const [aktivSection, setAktivSection] = useState<string | null>(null);
   const [capturedPhotos, setCapturedPhotos] = useState<
     Record<string, string[]>
   >({});
-
-  // ✅ State animasi sukses
   const [showSuccess, setShowSuccess] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const activeSections = fotoSections.filter((s) => fotoKeys.includes(s.key));
 
-  useFocusEffect(
-    useCallback(() => {
-      if (pendingPhotos.ready && aktivSection) {
-        const uris = pendingPhotos.uris;
-        setCapturedPhotos((prev) => ({
-          ...prev,
-          [aktivSection]: [...(prev[aktivSection] || []), ...uris].slice(0, 10),
-        }));
-        pendingPhotos.uris = [];
-        pendingPhotos.ready = false;
-        setAktivSection(null);
-      }
-    }, [aktivSection]),
-  );
+  useEffect(() => {
+    fetchDokterDanTag();
+  }, []);
 
-  const bukaKamera = (sectionKey: string) => {
-    setAktivSection(sectionKey);
-    setKameraVisible(true);
+  const fetchDokterDanTag = async () => {
+    try {
+      const [dokterRes, tagRes] = await Promise.all([
+        getDokterList(),
+        getTagList(),
+      ]);
+      if (dokterRes.data) setDokterList(dokterRes.data);
+      if (tagRes.success) setTagList(tagRes.data || []);
+    } catch (error) {
+      console.log("Error fetch dokter/tag:", error);
+    }
   };
 
   const bukaGallery = (sectionKey: string) => {
     setAktivSection(sectionKey);
+    galleryState.setCallback((uris: string[]) => {
+      setCapturedPhotos((prev) => ({
+        ...prev,
+        [sectionKey]: [...(prev[sectionKey] || []), ...uris].slice(0, 10),
+      }));
+    });
     router.push("/(admin)/GalleryScreen");
+  };
+
+  const bukaKamera = (sectionKey: string) => {
+    setAktivSection(sectionKey);
+    setKameraVisible(true);
   };
 
   const handleCapture = (uri: string) => {
@@ -146,45 +162,68 @@ export default function UploadFotoPasien() {
     }));
   };
 
+  const toggleTag = (tagId: number) => {
+    setSelectedTags((prev) =>
+      prev.includes(tagId)
+        ? prev.filter((id) => id !== tagId)
+        : [...prev, tagId],
+    );
+  };
+
   const aktivColor =
     fotoSections.find((s) => s.key === aktivSection)?.color || "#34B3B9";
 
-  // ✅ Handle Save — tampilkan animasi lalu navigate ke rontgen history
-  const handleSave = () => {
-    setShowSuccess(true);
+  const handleSave = async () => {
+    const totalFoto = Object.values(capturedPhotos).flat().length;
+    if (totalFoto === 0) {
+      alert("Minimal upload 1 foto!");
+      return;
+    }
+
+    if (!rontgenId) {
+      alert("ID Rontgen tidak ditemukan!");
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const dokId = selectedDokterObj?.id || doctorIdParam;
+      const res = await uploadFotoRontgen(
+        rontgenId,
+        capturedPhotos,
+        dokId,
+        notes,
+        selectedTags,
+      );
+
+      if (res.success) {
+        setShowSuccess(true);
+      } else {
+        alert(res.message || "Gagal upload foto");
+      }
+    } catch (error) {
+      console.log("Error upload:", error);
+      alert("Gagal konek ke server");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleSuccessDone = () => {
     setShowSuccess(false);
-    // Navigate ke tab rontgen, tab langsung ke history
     router.replace({
       pathname: "/(admin)/(tabs)/rontgen",
-      params: {
-        tab: "history",
-        // Kirim data pasien ke history
-        nama: pasienNama,
-        no: pasienNo,
-        jam: pasienJam,
-        umur: pasienUmur,
-        dokter: selectedDokter,
-        notes: notes,
-        field1,
-        field2,
-        field3,
-        fotoRontgen: String(capturedPhotos["rontgen_xray"]?.length || 0),
-        fotoProfil: String(capturedPhotos["profil_gigi"]?.length || 0),
-        fotoIntraoral: String(capturedPhotos["intraoral"]?.length || 0),
-      },
+      params: { tab: "history" },
     });
   };
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* ✅ Animasi Upload Berhasil */}
+      {/* Animasi Upload Berhasil */}
       <StatusBerhasil
         visible={showSuccess}
         title="Upload Foto Berhasil!"
-        subtitle="Perubahan telah tersimpan ke sistem"
+        subtitle="Data pemeriksaan telah tersimpan"
         onDone={handleSuccessDone}
       />
 
@@ -265,7 +304,7 @@ export default function UploadFotoPasien() {
                     { backgroundColor: section.color },
                   ]}
                 >
-                  <Text style={styles.countText}>{photos.length}/10</Text>
+                  <Text style={styles.countText}>{photos.length} foto</Text>
                 </View>
               </View>
 
@@ -279,7 +318,6 @@ export default function UploadFotoPasien() {
                   <View style={styles.uploadBtnRow}>
                     <TouchableOpacity
                       style={styles.uploadBtn}
-                      activeOpacity={0.7}
                       onPress={() => bukaKamera(section.key)}
                     >
                       <View
@@ -288,20 +326,16 @@ export default function UploadFotoPasien() {
                           { backgroundColor: section.iconBg },
                         ]}
                       >
-                        <Image
-                          source={require("../../assets/icons/icon_camera.png")}
-                          style={[
-                            styles.uploadIcon,
-                            { tintColor: section.color },
-                          ]}
-                          contentFit="contain"
+                        <Ionicons
+                          name="camera-outline"
+                          size={28}
+                          color={section.color}
                         />
                       </View>
                       <Text style={styles.uploadBtnLabel}>Camera</Text>
                     </TouchableOpacity>
                     <TouchableOpacity
                       style={styles.uploadBtn}
-                      activeOpacity={0.7}
                       onPress={() => bukaGallery(section.key)}
                     >
                       <View
@@ -310,21 +344,18 @@ export default function UploadFotoPasien() {
                           { backgroundColor: section.iconBg },
                         ]}
                       >
-                        <Image
-                          source={require("../../assets/icons/icon_gallery.png")}
-                          style={[
-                            styles.uploadIcon,
-                            { tintColor: section.color },
-                          ]}
-                          contentFit="contain"
+                        <Ionicons
+                          name="images-outline"
+                          size={28}
+                          color={section.color}
                         />
                       </View>
                       <Text style={styles.uploadBtnLabel}>Gallery</Text>
                     </TouchableOpacity>
                   </View>
                   <Text style={styles.uploadHint}>
-                    Capture or select high resolution X-ray files{"\n"}(JPEG,
-                    PNG up to 10MB)
+                    Tap Camera atau Gallery untuk upload foto{" "}
+                    {section.label.toLowerCase()}
                   </Text>
                 </View>
               ) : (
@@ -335,8 +366,8 @@ export default function UploadFotoPasien() {
                   ]}
                 >
                   <View style={styles.photoGrid}>
-                    {photos.map((uri, i) => (
-                      <View key={i} style={styles.photoWrapper}>
+                    {photos.map((uri, index) => (
+                      <View key={index} style={styles.photoWrapper}>
                         <Image
                           source={{ uri }}
                           style={styles.imageItem}
@@ -344,31 +375,26 @@ export default function UploadFotoPasien() {
                         />
                         <TouchableOpacity
                           style={styles.deleteBadge}
-                          onPress={() => hapusFoto(section.key, i)}
+                          onPress={() => hapusFoto(section.key, index)}
                         >
                           <Ionicons name="close" size={12} color="#fff" />
                         </TouchableOpacity>
                       </View>
                     ))}
-                    {photos.length < 10 && (
-                      <TouchableOpacity
-                        style={[
-                          styles.addButton,
-                          { borderColor: section.borderColor },
-                        ]}
-                        onPress={() => bukaKamera(section.key)}
-                      >
-                        <Ionicons name="add" size={24} color={section.color} />
-                        <Text
-                          style={[styles.addText, { color: section.color }]}
-                        >
-                          Tambah
-                        </Text>
-                      </TouchableOpacity>
-                    )}
+
+                    {/* Tombol tambah foto */}
+                    <TouchableOpacity
+                      style={[styles.addButton, { borderColor: section.color }]}
+                      onPress={() => bukaKamera(section.key)}
+                    >
+                      <Ionicons name="add" size={28} color={section.color} />
+                      <Text style={[styles.addText, { color: section.color }]}>
+                        ADD
+                      </Text>
+                    </TouchableOpacity>
                   </View>
                   <Text style={[styles.hintText, { color: section.color }]}>
-                    {photos.length} foto · tap X untuk hapus
+                    Tap + untuk tambah foto
                   </Text>
                 </View>
               )}
@@ -376,54 +402,58 @@ export default function UploadFotoPasien() {
           );
         })}
 
-        {/* Select Dokter */}
-        <View style={styles.section}>
-          <Text style={styles.fieldLabel}>SELECT DOKTER</Text>
+        {/* Dropdown Dokter */}
+        <View style={{ marginBottom: 20 }}>
+          <Text style={styles.fieldLabel}>DOKTER PEMERIKSA</Text>
           <TouchableOpacity
             style={styles.dropdown}
             onPress={() => setShowDokterDropdown(!showDokterDropdown)}
-            activeOpacity={0.8}
           >
-            <Text
-              style={[
-                styles.dropdownText,
-                !selectedDokter && { color: "#bbb" },
-              ]}
-            >
-              {selectedDokter || ""}
+            <Text style={styles.dropdownText}>
+              {selectedDokter || "Pilih Dokter"}
             </Text>
-            <Ionicons name="chevron-down" size={18} color="#888" />
+            <Ionicons
+              name={showDokterDropdown ? "chevron-up" : "chevron-down"}
+              size={16}
+              color="#888"
+            />
           </TouchableOpacity>
           {showDokterDropdown && (
             <View style={styles.dropdownList}>
-              {dokterList.map((d) => (
-                <TouchableOpacity
-                  key={d}
-                  style={styles.dropdownItem}
-                  onPress={() => {
-                    setSelectedDokter(d);
-                    setShowDokterDropdown(false);
-                  }}
-                >
-                  <Text style={styles.dropdownItemText}>{d}</Text>
-                </TouchableOpacity>
-              ))}
+              {dokterList.length === 0 ? (
+                <View style={styles.dropdownItem}>
+                  <Text style={styles.dropdownItemText}>Memuat...</Text>
+                </View>
+              ) : (
+                dokterList.map((d: any) => (
+                  <TouchableOpacity
+                    key={d.id}
+                    style={styles.dropdownItem}
+                    onPress={() => {
+                      setSelectedDokter(d.name);
+                      setSelectedDokterObj(d);
+                      setShowDokterDropdown(false);
+                    }}
+                  >
+                    <Text style={styles.dropdownItemText}>{d.name}</Text>
+                  </TouchableOpacity>
+                ))
+              )}
             </View>
           )}
         </View>
 
-        {/* Examination Notes */}
-        <View style={styles.section}>
-          <Text style={styles.fieldLabel}>EXAMINATION NOTES</Text>
+        {/* Notes */}
+        <View style={{ marginBottom: 20 }}>
+          <Text style={styles.fieldLabel}>CLINICAL NOTES</Text>
           <TextInput
             style={styles.notesInput}
-            placeholder="Type examination result, diagnosis, or recommendations here..."
-            placeholderTextColor="#bbb"
+            placeholder="Masukkan catatan klinis..."
+            placeholderTextColor="#aaa"
             multiline
-            numberOfLines={5}
+            textAlignVertical="top"
             value={notes}
             onChangeText={setNotes}
-            textAlignVertical="top"
           />
         </View>
 
@@ -456,24 +486,48 @@ export default function UploadFotoPasien() {
           />
         </View>
 
-        {/* Tag Suggestions */}
-        <View style={styles.tagRow}>
-          {tagSuggestions.map((tag) => (
-            <TouchableOpacity key={tag} style={styles.tagChip}>
-              <Text style={styles.tagChipText}>{tag}</Text>
-            </TouchableOpacity>
-          ))}
+        {/* Tags dari API */}
+        <View style={{ marginBottom: 20 }}>
+          <Text style={styles.fieldLabel}>TAGS</Text>
+          <View style={styles.tagRow}>
+            {tagList.map((tag: any) => {
+              const isSelected = selectedTags.includes(tag.id);
+              return (
+                <TouchableOpacity
+                  key={tag.id}
+                  style={[styles.tagChip, isSelected && styles.tagChipActive]}
+                  onPress={() => toggleTag(tag.id)}
+                >
+                  <Text
+                    style={[
+                      styles.tagChipText,
+                      isSelected && styles.tagChipTextActive,
+                    ]}
+                  >
+                    #{tag.tag_name}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </View>
         </View>
 
         {/* Save Button */}
         <View style={[styles.saveWrapper, { paddingTop: 32 }]}>
           <TouchableOpacity
-            style={styles.saveBtn}
+            style={[styles.saveBtn, loading && { opacity: 0.7 }]}
             activeOpacity={0.8}
             onPress={handleSave}
+            disabled={loading}
           >
-            <Ionicons name="save-outline" size={20} color="#fff" />
-            <Text style={styles.saveBtnText}>Save Data</Text>
+            {loading ? (
+              <ActivityIndicator color="#fff" size="small" />
+            ) : (
+              <Ionicons name="save-outline" size={20} color="#fff" />
+            )}
+            <Text style={styles.saveBtnText}>
+              {loading ? "Menyimpan..." : "Save Data"}
+            </Text>
           </TouchableOpacity>
         </View>
       </ScrollView>
@@ -482,6 +536,13 @@ export default function UploadFotoPasien() {
 }
 
 const styles = StyleSheet.create({
+  emptyText: {
+    textAlign: "center",
+    color: "#aaa",
+    marginTop: 40,
+    fontSize: 14,
+    marginHorizontal: 16,
+  },
   container: { flex: 1, backgroundColor: "#E2F0F1" },
   header: {
     flexDirection: "row",
@@ -551,7 +612,6 @@ const styles = StyleSheet.create({
     justifyContent: "center",
     alignItems: "center",
   },
-  uploadIcon: { width: 32, height: 32 },
   uploadBtnLabel: { fontSize: 13, color: "#555", fontWeight: "500" },
   uploadHint: {
     fontSize: 11,
@@ -596,7 +656,6 @@ const styles = StyleSheet.create({
   addText: { fontSize: 10, fontWeight: "800" },
   hintText: {
     fontSize: 10,
-    color: "#555",
     textAlign: "center",
     marginTop: 12,
     fontWeight: "500",
@@ -677,7 +736,12 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: "#e8e5e5",
   },
+  tagChipActive: {
+    backgroundColor: "#E2F0F1",
+    borderColor: "#34B3B9",
+  },
   tagChipText: { fontSize: 12, color: "#888" },
+  tagChipTextActive: { fontSize: 12, color: "#34B3B9", fontWeight: "600" },
   saveWrapper: { paddingHorizontal: 24, backgroundColor: "#E2F0F1" },
   saveBtn: {
     flexDirection: "row",

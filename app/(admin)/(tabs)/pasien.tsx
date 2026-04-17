@@ -1,5 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
-import { useState } from "react";
+import { router } from "expo-router";
+import { useEffect, useState } from "react";
 import {
   Image,
   ScrollView,
@@ -17,6 +18,12 @@ import Animated, {
 import StatusBerhasil from "../../../components/beranda/Statusberhasil";
 import UbahStatusPasien from "../../../components/beranda/Ubahstatuspasien";
 import AppHeader from "../../../components/shared/AppHeader";
+import {
+  createRontgen,
+  getPasienHadir,
+  getRontgenByPatient,
+  updateStatusRontgen,
+} from "../../../services/pasienService";
 
 const HEADER_HEIGHT = 100;
 const PARALLAX_DISTANCE = 1;
@@ -44,6 +51,7 @@ const filters = ["Semua", "Menunggu", "Di Ruangan", "Upload foto", "Selesai"];
 
 type Pasien = {
   id: number;
+  reservasiId: number;
   nama: string;
   no: string;
   jam: string;
@@ -52,70 +60,37 @@ type Pasien = {
   statusWarna: string;
   statusBg: string;
   fotoKeys?: string[];
+  rontgenId?: number;
+  doctorId?: number;
+  patientId?: number;
 };
 
-const initialData: Pasien[] = [
-  {
-    id: 1,
-    nama: "Budi Santoso",
-    no: "001",
-    jam: "08:30",
-    umur: "32 th",
-    status: "Dalam Ruangan",
-    statusWarna: "#1010a6a2",
-    statusBg: "#5a88e44e",
+// Map status API ke label UI
+const apiStatusToUI: Record<
+  string,
+  { label: string; warna: string; bg: string }
+> = {
+  menunggu: { label: "Menunggu", warna: "#7a6200b2", bg: "#ffd70031" },
+  di_dalam_ruangan: {
+    label: "Dalam Ruangan",
+    warna: "#1010a6a2",
+    bg: "#5a88e44e",
   },
-  {
-    id: 2,
-    nama: "Siti Rahayu",
-    no: "002",
-    jam: "08:45",
-    umur: "25 th",
-    status: "Perlu Rontgen",
-    statusWarna: "#851414b2",
-    statusBg: "#e12c2c31",
-    fotoKeys: ["rontgen_xray", "profil_gigi", "intraoral"],
+  perlu_upload_foto: {
+    label: "Perlu Rontgen",
+    warna: "#851414b2",
+    bg: "#e12c2c31",
   },
-  {
-    id: 3,
-    nama: "Ahmad Fauzi",
-    no: "003",
-    jam: "09:00",
-    umur: "41 th",
-    status: "Selesai",
-    statusWarna: "#134a4d9b",
-    statusBg: "#C0EAE3",
-  },
-  {
-    id: 4,
-    nama: "Siti Nur Azizah",
-    no: "004",
-    jam: "09:30",
-    umur: "21 th",
-    status: "Menunggu",
-    statusWarna: "#7a6200b2",
-    statusBg: "#ffd70031",
-  },
-  {
-    id: 5,
-    nama: "Dewi Lestari",
-    no: "005",
-    jam: "10:00",
-    umur: "25 th",
-    status: "Perlu Rontgen",
-    statusWarna: "#851414b2",
-    statusBg: "#e12c2c31",
-    fotoKeys: ["profil_gigi", "intraoral"],
-  },
-];
+  selesai: { label: "Selesai", warna: "#134a4d9b", bg: "#C0EAE3" },
+};
 
-const statusMap: Record<string, { label: string; warna: string; bg: string }> =
-  {
-    menunggu: { label: "Menunggu", warna: "#7a6200b2", bg: "#ffd70031" },
-    ruangan: { label: "Dalam Ruangan", warna: "#1010a6a2", bg: "#5a88e44e" },
-    rontgen: { label: "Perlu Rontgen", warna: "#851414b2", bg: "#e12c2c31" },
-    selesai: { label: "Selesai", warna: "#134a4d9b", bg: "#C0EAE3" },
-  };
+// Map key dari modal ke status API
+const modalKeyToApiStatus: Record<string, string> = {
+  menunggu: "menunggu",
+  ruangan: "di_dalam_ruangan",
+  rontgen: "perlu_upload_foto",
+  selesai: "selesai",
+};
 
 const filterMap: Record<string, string[]> = {
   Semua: ["Dalam Ruangan", "Perlu Rontgen", "Selesai", "Menunggu"],
@@ -126,12 +101,67 @@ const filterMap: Record<string, string[]> = {
 };
 
 export default function Pasien() {
-  const [data, setData] = useState<Pasien[]>(initialData);
+  const [data, setData] = useState<Pasien[]>([]);
   const [activeFilter, setActiveFilter] = useState("Semua");
   const [selectedPasien, setSelectedPasien] = useState<Pasien | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [successSubtitle, setSuccessSubtitle] = useState(
+    "Perubahan telah tersimpan ke sistem",
+  );
+  const [pendingNav, setPendingNav] = useState<(() => void) | null>(null);
   const scrollY = useSharedValue(0);
+
+  useEffect(() => {
+    fetchPasien();
+  }, []);
+
+  const fetchPasien = async () => {
+    try {
+      const res = await getPasienHadir();
+      if (res.success && res.data?.reservations) {
+        const list: Pasien[] = await Promise.all(
+          res.data.reservations.map(async (r: any) => {
+            // Cek apakah pasien sudah punya rontgen
+            let rontgenId: number | undefined;
+            let statusLabel = "Menunggu";
+            let statusWarna = "#7a6200b2";
+            let statusBg = "#ffd70031";
+
+            const rontgenRes = await getRontgenByPatient(r.patient?.id);
+            if (rontgenRes.success && rontgenRes.data?.rontgens?.length > 0) {
+              const latestRontgen = rontgenRes.data.rontgens[0];
+              rontgenId = latestRontgen.id;
+              const mapped = apiStatusToUI[latestRontgen.status];
+              if (mapped) {
+                statusLabel = mapped.label;
+                statusWarna = mapped.warna;
+                statusBg = mapped.bg;
+              }
+            }
+
+            return {
+              id: r.patient?.id,
+              reservasiId: r.id,
+              nama: r.patient?.name || "-",
+              no: String(r.id).padStart(3, "0"),
+              jam: r.appointment_time || "-",
+              umur: r.age ? `${r.age} th` : "-",
+              status: statusLabel,
+              statusWarna,
+              statusBg,
+              rontgenId,
+              doctorId: r.doctor?.id,
+              patientId: r.patient?.id,
+            };
+          }),
+        );
+        setData(list);
+      }
+    } catch (error) {
+      console.log("Error fetch pasien:", error);
+    }
+  };
 
   const scrollHandler = useAnimatedScrollHandler({
     onScroll: (event) => {
@@ -156,36 +186,87 @@ export default function Pasien() {
     filterMap[activeFilter].includes(p.status),
   );
 
-  const handleSave = (
+  const handleSave = async (
     pasienId: number,
     statusKey: string,
     fotoKeys?: string[],
   ) => {
-    const mapped = statusMap[statusKey];
-    setData((prev) =>
-      prev.map((p) =>
-        p.id === pasienId
-          ? {
-              ...p,
-              status: mapped.label,
-              statusWarna: mapped.warna,
-              statusBg: mapped.bg,
-              fotoKeys,
-            }
-          : p,
-      ),
-    );
-    // Tampilkan animasi sukses
-    setShowSuccess(true);
+    const apiStatus = modalKeyToApiStatus[statusKey];
+    const mapped = apiStatusToUI[apiStatus];
+    const pasien = data.find((p) => p.id === pasienId);
+
+    try {
+      let rontgenId = pasien?.rontgenId;
+
+      if (!rontgenId) {
+        // Belum punya rontgen → buat baru
+        const res = await createRontgen(
+          pasien?.patientId || pasienId,
+          pasien?.doctorId || 1,
+          apiStatus,
+        );
+        if (res.success) {
+          rontgenId = res.data?.id;
+        }
+      } else {
+        // Sudah ada rontgen → update status
+        await updateStatusRontgen(rontgenId, apiStatus);
+      }
+
+      // Update UI
+      setData((prev) =>
+        prev.map((p) =>
+          p.id === pasienId
+            ? {
+                ...p,
+                status: mapped.label,
+                statusWarna: mapped.warna,
+                statusBg: mapped.bg,
+                rontgenId,
+                fotoKeys,
+              }
+            : p,
+        ),
+      );
+
+      if (statusKey === "rontgen" && pasien) {
+        setSuccessSubtitle("Redirect to upload foto...");
+        setPendingNav(
+          () => () =>
+            router.push({
+              pathname: "/(admin)/Uploadfotopasien ",
+              params: {
+                nama: pasien.nama,
+                no: pasien.no,
+                jam: pasien.jam,
+                umur: pasien.umur,
+                fotoKeys: (fotoKeys || []).join(","),
+                rontgenId: String(rontgenId || ""),
+                patientId: String(pasien.patientId || ""),
+                doctorId: String(pasien.doctorId || ""),
+              },
+            }),
+        );
+      } else {
+        setSuccessSubtitle("Perubahan telah tersimpan ke sistem");
+        setPendingNav(null);
+      }
+
+      setShowSuccess(true);
+    } catch (error) {
+      console.log("Error save status:", error);
+    }
   };
 
   const handleSuccessDone = () => {
     setShowSuccess(false);
-    // Tidak perlu navigate karena sudah di pasien
+    if (pendingNav) {
+      pendingNav();
+      setPendingNav(null);
+    }
   };
 
   return (
-    // ⚠️ View root harus flex:1 tanpa overflow:hidden agar StatusBerhasil cover full
     <View style={styles.container}>
       <Animated.View style={[styles.headerWrapper, headerStyle]}>
         <AppHeader scrollY={scrollY} />
@@ -228,93 +309,95 @@ export default function Pasien() {
           ))}
         </ScrollView>
 
-        <View style={styles.listWrapper}>
-          {filtered.map((pasien) => {
-            const hasRontgen =
-              pasien.status === "Perlu Rontgen" &&
-              pasien.fotoKeys &&
-              pasien.fotoKeys.length > 0;
-            return (
-              <TouchableOpacity
-                key={pasien.id}
-                style={styles.card}
-                onPress={() => {
-                  setSelectedPasien(pasien);
-                  setModalVisible(true);
-                }}
-                activeOpacity={0.7}
-              >
-                <View style={styles.avatar}>
-                  <Ionicons name="person" size={24} color="#2E9DA4" />
-                </View>
+        {data.length === 0 ? (
+          <Text style={styles.emptyText}>Tidak ada pasien hadir hari ini</Text>
+        ) : (
+          <View style={styles.listWrapper}>
+            {filtered.map((pasien) => {
+              const hasRontgen =
+                pasien.status === "Perlu Rontgen" &&
+                pasien.fotoKeys &&
+                pasien.fotoKeys.length > 0;
+              return (
+                <TouchableOpacity
+                  key={pasien.id}
+                  style={styles.card}
+                  onPress={() => {
+                    setSelectedPasien(pasien);
+                    setModalVisible(true);
+                  }}
+                  activeOpacity={0.7}
+                >
+                  <View style={styles.avatar}>
+                    <Ionicons name="person" size={24} color="#2E9DA4" />
+                  </View>
 
-                <View style={styles.info}>
-                  <Text style={styles.nama}>{pasien.nama}</Text>
-                  <Text style={styles.sub}>
-                    No. {pasien.no} · {pasien.jam} · {pasien.umur}
-                  </Text>
+                  <View style={styles.info}>
+                    <Text style={styles.nama}>{pasien.nama}</Text>
+                    <Text style={styles.sub}>
+                      No. {pasien.no} · {pasien.jam} · {pasien.umur}
+                    </Text>
 
-                  <View style={styles.badgeRow}>
-                    {/* Kalau ada foto tags, langsung tampil tags tanpa badge status */}
-                    {hasRontgen ? (
-                      pasien.fotoKeys!.map((key) => (
-                        <View key={key} style={styles.fotoTag}>
-                          {fotoIcon[key] && (
+                    <View style={styles.badgeRow}>
+                      {hasRontgen ? (
+                        pasien.fotoKeys!.map((key) => (
+                          <View key={key} style={styles.fotoTag}>
+                            {fotoIcon[key] && (
+                              <Image
+                                source={fotoIcon[key]}
+                                style={styles.fotoTagIcon}
+                                resizeMode="contain"
+                              />
+                            )}
+                            <Text style={styles.fotoTagText}>
+                              {fotoLabel[key]}
+                            </Text>
+                          </View>
+                        ))
+                      ) : (
+                        <View
+                          style={[
+                            styles.statusBadge,
+                            { backgroundColor: pasien.statusBg },
+                          ]}
+                        >
+                          {statusIcon[pasien.status] && (
                             <Image
-                              source={fotoIcon[key]}
-                              style={styles.fotoTagIcon}
+                              source={statusIcon[pasien.status]}
+                              style={styles.badgeIcon}
                               resizeMode="contain"
                             />
                           )}
-                          <Text style={styles.fotoTagText}>
-                            {fotoLabel[key]}
+                          <Text
+                            style={[
+                              styles.statusText,
+                              { color: pasien.statusWarna },
+                            ]}
+                          >
+                            {pasien.status}
                           </Text>
                         </View>
-                      ))
-                    ) : (
-                      <View
-                        style={[
-                          styles.statusBadge,
-                          { backgroundColor: pasien.statusBg },
-                        ]}
-                      >
-                        {statusIcon[pasien.status] && (
-                          <Image
-                            source={statusIcon[pasien.status]}
-                            style={styles.badgeIcon}
-                            resizeMode="contain"
-                          />
-                        )}
-                        <Text
-                          style={[
-                            styles.statusText,
-                            { color: pasien.statusWarna },
-                          ]}
-                        >
-                          {pasien.status}
-                        </Text>
-                      </View>
-                    )}
+                      )}
+                    </View>
                   </View>
-                </View>
 
-                {hasRontgen ? (
-                  <View style={styles.rontgenIcon}>
-                    <Image
-                      source={require("../../../assets/icons/camera.png")}
-                      style={styles.cameraIcon}
-                    />
-                  </View>
-                ) : (
-                  <Ionicons name="chevron-forward" size={18} color="#ccc" />
-                )}
-              </TouchableOpacity>
-            );
-          })}
-        </View>
+                  {hasRontgen ? (
+                    <View style={styles.rontgenIcon}>
+                      <Image
+                        source={require("../../../assets/icons/camera.png")}
+                        style={styles.cameraIcon}
+                      />
+                    </View>
+                  ) : (
+                    <Ionicons name="chevron-forward" size={18} color="#ccc" />
+                  )}
+                </TouchableOpacity>
+              );
+            })}
+          </View>
+        )}
       </Animated.ScrollView>
 
-      {/* Modal ubah status */}
       <UbahStatusPasien
         visible={modalVisible}
         pasien={selectedPasien}
@@ -322,8 +405,11 @@ export default function Pasien() {
         onSave={handleSave}
       />
 
-      {/* ✅ StatusBerhasil langsung di root View — bisa cover full screen */}
-      <StatusBerhasil visible={showSuccess} onDone={handleSuccessDone} />
+      <StatusBerhasil
+        visible={showSuccess}
+        subtitle={successSubtitle}
+        onDone={handleSuccessDone}
+      />
     </View>
   );
 }
@@ -344,6 +430,12 @@ const styles = StyleSheet.create({
     marginHorizontal: 32,
     marginTop: 30,
     marginBottom: 20,
+  },
+  emptyText: {
+    textAlign: "center",
+    color: "#aaa",
+    marginTop: 40,
+    fontSize: 14,
   },
   filterWrapper: { paddingHorizontal: 16, gap: 6, marginBottom: 16 },
   filterBtn: {

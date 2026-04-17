@@ -5,7 +5,6 @@ import { Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
 import StatusBerhasil from "./Statusberhasil";
 import UbahStatusPasien from "./Ubahstatuspasien";
 
-// Pakai fungsi getter agar tidak crash kalau file belum ada
 const getStatusIcon = (status: string) => {
   try {
     switch (status) {
@@ -25,38 +24,21 @@ const getStatusIcon = (status: string) => {
   }
 };
 
-const pasienData = [
-  {
-    id: 1,
-    nama: "Budi Santoso",
-    no: "003",
-    jam: "09:00",
-    umur: "41 th",
-    status: "Dalam Ruangan",
-    statusWarna: "#1010a6a2",
-    statusBg: "#5a88e44e",
-  },
-  {
-    id: 2,
-    nama: "Siti Rahayu",
-    no: "002",
-    jam: "08:45",
-    umur: "25 th",
-    status: "Perlu Rontgen",
-    statusWarna: "#851414b2",
-    statusBg: "#e12c2c31",
-  },
-  {
-    id: 3,
-    nama: "Ahmad Fauzi",
-    no: "001",
-    jam: "08:30",
-    umur: "32 th",
-    status: "Selesai",
-    statusWarna: "#134a4d9b",
-    statusBg: "#C0EAE3",
-  },
-];
+// Map status dari API ke label UI
+const mapStatus = (apiStatus: string) => {
+  switch (apiStatus) {
+    case "menunggu":
+      return { label: "Menunggu", warna: "#7a6200b2", bg: "#ffd70031" };
+    case "di_dalam_ruangan":
+      return { label: "Dalam Ruangan", warna: "#1010a6a2", bg: "#5a88e44e" };
+    case "perlu_upload_foto":
+      return { label: "Perlu Rontgen", warna: "#851414b2", bg: "#e12c2c31" };
+    case "selesai":
+      return { label: "Selesai", warna: "#134a4d9b", bg: "#C0EAE3" };
+    default:
+      return { label: "Menunggu", warna: "#7a6200b2", bg: "#ffd70031" };
+  }
+};
 
 const statusMap: Record<string, { label: string; warna: string; bg: string }> =
   {
@@ -66,11 +48,25 @@ const statusMap: Record<string, { label: string; warna: string; bg: string }> =
     selesai: { label: "Selesai", warna: "#134a4d9b", bg: "#C0EAE3" },
   };
 
-export default function PasienHadirList() {
-  const [data, setData] = useState(pasienData);
-  const [selectedPasien, setSelectedPasien] = useState<
-    (typeof pasienData)[0] | null
-  >(null);
+type PasienItem = {
+  id: number;
+  nama: string;
+  no: string;
+  jam: string;
+  umur: string;
+  status: string;
+  statusWarna: string;
+  statusBg: string;
+  rontgenId?: number;
+};
+
+interface Props {
+  pasienList?: PasienItem[];
+}
+
+export default function PasienHadirList({ pasienList = [] }: Props) {
+  const [data, setData] = useState<PasienItem[]>(pasienList);
+  const [selectedPasien, setSelectedPasien] = useState<PasienItem | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
   const [successSubtitle, setSuccessSubtitle] = useState(
@@ -78,7 +74,12 @@ export default function PasienHadirList() {
   );
   const [pendingNav, setPendingNav] = useState<(() => void) | null>(null);
 
-  const handlePress = (pasien: (typeof pasienData)[0]) => {
+  // Update data saat props berubah
+  useState(() => {
+    setData(pasienList);
+  });
+
+  const handlePress = (pasien: PasienItem) => {
     setSelectedPasien(pasien);
     setModalVisible(true);
   };
@@ -105,7 +106,6 @@ export default function PasienHadirList() {
     );
 
     if (statusKey === "rontgen" && pasien) {
-      // Upload foto — subtitle berbeda + navigate ke upload
       setSuccessSubtitle("Redirect to upload foto...");
       setPendingNav(
         () => () =>
@@ -121,7 +121,6 @@ export default function PasienHadirList() {
           }),
       );
     } else {
-      // Status lain — navigate ke pasien
       setSuccessSubtitle("Perubahan telah tersimpan ke sistem");
       setPendingNav(() => () => router.push("/(admin)/(tabs)/pasien"));
     }
@@ -141,42 +140,50 @@ export default function PasienHadirList() {
     <View style={styles.container}>
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Pasien Hadir Hari Ini</Text>
-        <TouchableOpacity>
+        <TouchableOpacity onPress={() => router.push("/(admin)/(tabs)/pasien")}>
           <Text style={styles.semua}>Semua</Text>
         </TouchableOpacity>
       </View>
 
-      {data.map((pasien) => (
-        <TouchableOpacity
-          key={pasien.id}
-          style={styles.card}
-          onPress={() => handlePress(pasien)}
-          activeOpacity={0.7}
-        >
-          <View style={styles.avatar}>
-            <Ionicons name="person" size={24} color="#2E9DA4" />
-          </View>
-          <View style={styles.info}>
-            <Text style={styles.nama}>{pasien.nama}</Text>
-            <Text style={styles.sub}>
-              No. {pasien.no} · {pasien.jam} · {pasien.umur}
-            </Text>
-            <View style={[styles.badge, { backgroundColor: pasien.statusBg }]}>
-              {getStatusIcon(pasien.status) ? (
-                <Image
-                  source={getStatusIcon(pasien.status)}
-                  style={styles.badgeIcon}
-                  resizeMode="contain"
-                />
-              ) : null}
-              <Text style={[styles.badgeText, { color: pasien.statusWarna }]}>
-                {pasien.status}
-              </Text>
+      {data.length === 0 ? (
+        <Text style={{ textAlign: "center", color: "#aaa", marginTop: 20 }}>
+          Tidak ada pasien hadir hari ini
+        </Text>
+      ) : (
+        data.map((pasien) => (
+          <TouchableOpacity
+            key={pasien.id}
+            style={styles.card}
+            onPress={() => handlePress(pasien)}
+            activeOpacity={0.7}
+          >
+            <View style={styles.avatar}>
+              <Ionicons name="person" size={24} color="#2E9DA4" />
             </View>
-          </View>
-          <Ionicons name="chevron-forward" size={18} color="#ccc" />
-        </TouchableOpacity>
-      ))}
+            <View style={styles.info}>
+              <Text style={styles.nama}>{pasien.nama}</Text>
+              <Text style={styles.sub}>
+                No. {pasien.no} · {pasien.jam} · {pasien.umur}
+              </Text>
+              <View
+                style={[styles.badge, { backgroundColor: pasien.statusBg }]}
+              >
+                {getStatusIcon(pasien.status) && (
+                  <Image
+                    source={getStatusIcon(pasien.status)}
+                    style={styles.badgeIcon}
+                    resizeMode="contain"
+                  />
+                )}
+                <Text style={[styles.badgeText, { color: pasien.statusWarna }]}>
+                  {pasien.status}
+                </Text>
+              </View>
+            </View>
+            <Ionicons name="chevron-forward" size={18} color="#ccc" />
+          </TouchableOpacity>
+        ))
+      )}
 
       <UbahStatusPasien
         visible={modalVisible}

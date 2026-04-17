@@ -1,7 +1,15 @@
 import { LinearGradient } from "expo-linear-gradient";
 import { Image, ImageBackground, StyleSheet, Text, View } from "react-native";
 
-export default function CardSelamatDatang() {
+interface Props {
+  namaAdmin?: string;
+  totalRontgen?: number;
+}
+
+export default function CardSelamatDatang({
+  namaAdmin = "Admin Klinik",
+  totalRontgen = 0,
+}: Props) {
   const today = new Date().toLocaleDateString("id-ID", {
     weekday: "long",
     day: "2-digit",
@@ -22,7 +30,7 @@ export default function CardSelamatDatang() {
           style={styles.icon2}
         />
         <Text style={styles.label}>SELAMAT DATANG</Text>
-        <Text style={styles.nama}>Admin Klinik</Text>
+        <Text style={styles.nama}>{namaAdmin}</Text>
         <Text style={styles.tanggal}>{today}</Text>
 
         <View style={styles.rontgenRow}>
@@ -31,7 +39,7 @@ export default function CardSelamatDatang() {
             style={styles.icon}
           />
           <Text style={styles.rontgenText}>Total rontgen bulan ini</Text>
-          <Text style={styles.rontgenAngka}>47</Text>
+          <Text style={styles.rontgenAngka}>{totalRontgen}</Text>
         </View>
         <ImageBackground
           source={require("../../assets/images/Ellipse8.png")}
@@ -100,8 +108,8 @@ const styles = StyleSheet.create({
     width: 85,
     height: 65,
     left: 230,
-    bottom: 25, 
-    marginBottom: -60,  
+    bottom: 25,
+    marginBottom: -60,
   },
 
   rontgenText: {

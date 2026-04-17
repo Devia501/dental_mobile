@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { Image, StyleSheet, Text, View } from "react-native";
 import Animated, {
   interpolate,
@@ -9,12 +10,72 @@ import CardSelamatDatang from "../../../components/beranda/CardSelamatDatang";
 import PasienHadirList from "../../../components/beranda/PasienHadirList";
 import StatsGrid from "../../../components/beranda/StatsGrid";
 import AppHeader from "../../../components/shared/AppHeader";
+import { getUser } from "../../../services/authService";
+import {
+  getDashboard,
+  getPasienHariIni,
+} from "../../../services/berandaService";
 
 const HEADER_HEIGHT = 100;
 const PARALLAX_DISTANCE = 1;
 
 export default function Beranda() {
   const scrollY = useSharedValue(0);
+
+  const [namaAdmin, setNamaAdmin] = useState("Admin Klinik");
+  const [totalRontgen, setTotalRontgen] = useState(0);
+  const [stats, setStats] = useState({
+    hadir: 0,
+    rontgen: 0,
+    selesai: 0,
+    diRuangan: 0,
+  });
+  const [pasienList, setPasienList] = useState<any[]>([]);
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  const fetchData = async () => {
+    try {
+      // Nama admin dari SecureStore
+      const user = await getUser();
+      if (user?.name) setNamaAdmin(user.name);
+
+      // Dashboard stats
+      const dashboard = await getDashboard();
+      if (dashboard.success) {
+        const daily = dashboard.data.daily_statistics;
+        const totals = dashboard.data.totals;
+
+        setTotalRontgen(totals.total_rontgens || 0);
+        setStats({
+          hadir: daily.validated || 0,
+          rontgen: totals.total_rontgens || 0,
+          selesai: daily.completed || 0,
+          diRuangan: daily.pending || 0,
+        });
+      }
+
+      // Pasien hadir hari ini
+      const reservasi = await getPasienHariIni();
+      if (reservasi.success && reservasi.data?.reservations) {
+        const list = reservasi.data.reservations.map((r: any) => ({
+          id: r.id,
+          nama: r.patient?.name || "-",
+          no: String(r.id).padStart(3, "0"),
+          jam: r.appointment_time || "-",
+          umur: r.age ? `${r.age} th` : "-",
+          status: "Menunggu",
+          statusWarna: "#7a6200b2",
+          statusBg: "#ffd70031",
+        }));
+        setPasienList(list);
+      }
+    } catch (error) {
+      console.log("Error fetch beranda:", error);
+    }
+  };
 
   const scrollHandler = useAnimatedScrollHandler({
     onScroll: (event) => {
@@ -47,8 +108,13 @@ export default function Beranda() {
           paddingBottom: 100,
         }}
       >
-        <CardSelamatDatang />
-        <StatsGrid />
+        <CardSelamatDatang namaAdmin={namaAdmin} totalRontgen={totalRontgen} />
+        <StatsGrid
+          hadir={stats.hadir}
+          rontgen={stats.rontgen}
+          selesai={stats.selesai}
+          diRuangan={stats.diRuangan}
+        />
 
         <View style={styles.tips}>
           <Image
@@ -60,7 +126,7 @@ export default function Beranda() {
           </Text>
         </View>
 
-        <PasienHadirList />
+        <PasienHadirList pasienList={pasienList} />
 
         <View style={{ height: 32 }} />
       </Animated.ScrollView>
