@@ -1,4 +1,5 @@
 import { Ionicons } from "@expo/vector-icons";
+import { router } from "expo-router";
 import { useState } from "react";
 import {
   Image,
@@ -67,27 +68,48 @@ const fotoOptions = [
   },
 ];
 
+// ── Types ──────────────────────────────────────────────────────────────────────
+
 interface Pasien {
   id: number;
+  reservasiId?: number;
+  rontgenId?: number;
   nama: string;
   no: string;
   jam: string;
   umur: string;
   status: string;
+  patientId?: number;
+  doctorId?: number;
+  fotoKeys?: string[];
 }
 
 interface Props {
   visible: boolean;
   pasien: Pasien | null;
   onClose: () => void;
-  // onSave sekarang terima callback onDone untuk trigger animasi di parent
+  /**
+   * onSave dipanggil saat user tekan Simpan.
+   *
+   * Parent (PasienHadirList) bertanggung jawab:
+   * - "menunggu" / "ruangan" → update status saja, return null
+   * - "rontgen"  → createRontgen(status: "perlu_upload_foto", targetFoto),
+   *                return { rontgenId, doctorId }
+   * - "selesai"  → createRontgen(status: "selesai"),
+   *                return { rontgenId, doctorId }
+   *
+   * Setelah resolve, komponen ini yang melakukan router.push ke
+   * UploadFotoPasien sehingga parent tidak perlu tahu soal navigasi.
+   */
   onSave: (
     pasienId: number,
     statusKey: string,
     fotoKeys?: string[],
-    onDone?: () => void,
-  ) => void;
+    tanpaFoto?: boolean,
+  ) => Promise<{ rontgenId: number; doctorId?: number } | null>;
 }
+
+// ── Komponen ───────────────────────────────────────────────────────────────────
 
 export default function UbahStatusPasien({
   visible,
@@ -97,6 +119,7 @@ export default function UbahStatusPasien({
 }: Props) {
   const [selected, setSelected] = useState<string | null>(null);
   const [selectedFoto, setSelectedFoto] = useState<string[]>([]);
+  const [saving, setSaving] = useState(false);
   const insets = useSafeAreaInsets();
 
   if (!pasien) return null;
@@ -107,17 +130,50 @@ export default function UbahStatusPasien({
     );
   };
 
+  // Tombol Simpan aktif jika sudah pilih status,
+  // dan jika "rontgen" minimal 1 jenis foto harus dipilih.
   const canSave =
-    selected && (selected !== "rontgen" || selectedFoto.length > 0);
+    selected !== null && (selected !== "rontgen" || selectedFoto.length > 0);
 
-  const handleSave = () => {
-    if (!canSave) return;
+  const handleSave = async () => {
+    if (!canSave || !selected || saving) return;
+
+    const isTanpaFoto = selected === "selesai";
+    // Status "rontgen" dan "selesai" keduanya butuh navigate ke UploadFotoPasien
+    const needsNavigate = selected === "rontgen" || selected === "selesai";
     const fotoKeys = selected === "rontgen" ? selectedFoto : undefined;
-    setSelected(null);
-    setSelectedFoto([]);
-    onClose();
-    // Panggil onSave, parent yang handle animasi sukses
-    onSave(pasien.id, selected!, fotoKeys);
+
+    setSaving(true);
+    try {
+      // Panggil handler di parent → createRontgen / updateStatus
+      const result = await onSave(pasien.id, selected, fotoKeys, isTanpaFoto);
+
+      // Tutup modal lebih dulu
+      handleClose();
+
+      // Navigate ke UploadFotoPasien jika status butuh pengisian data pemeriksaan
+      if (needsNavigate && result?.rontgenId) {
+        router.push({
+          pathname: "/(admin)/Uploadfotopasien ",
+          params: {
+            rontgenId: result.rontgenId,
+            doctorId: result.doctorId ?? pasien.doctorId ?? 0,
+            nama: pasien.nama,
+            no: pasien.no,
+            jam: pasien.jam,
+            umur: pasien.umur,
+            // fotoKeys: kosong ("") saat tanpaFoto → section upload tidak muncul
+            fotoKeys: isTanpaFoto ? "" : (fotoKeys ?? []).join(","),
+            // Flag mode: "true" = selesai tanpa foto, "false" = upload foto biasa
+            tanpaFoto: isTanpaFoto ? "true" : "false",
+          },
+        });
+      }
+    } catch (error) {
+      console.log("UbahStatusPasien handleSave error:", error);
+    } finally {
+      setSaving(false);
+    }
   };
 
   const handleClose = () => {
@@ -125,6 +181,8 @@ export default function UbahStatusPasien({
     setSelectedFoto([]);
     onClose();
   };
+
+  // ── Render ─────────────────────────────────────────────────────────────────
 
   return (
     <Modal
@@ -144,6 +202,7 @@ export default function UbahStatusPasien({
       <View style={[styles.sheet, { paddingBottom: insets.bottom + 16 }]}>
         <View style={styles.handle} />
         <ScrollView showsVerticalScrollIndicator={false}>
+          {/* ── Info Pasien ────────────────────────────────────────────── */}
           <View style={styles.pasienCard}>
             <View style={styles.avatar}>
               <Ionicons name="person" size={24} color="#2E9DA4" />
@@ -158,18 +217,23 @@ export default function UbahStatusPasien({
 
           <Text style={styles.title}>Ubah Status Pasien</Text>
 
+          {/* ── Opsi Status ────────────────────────────────────────────── */}
           {statusOptions.map((opt) => {
             const isSelected = selected === opt.key;
             const isRontgen = opt.key === "rontgen" && isSelected;
+            const isSelesai = opt.key === "selesai" && isSelected;
+
             return (
               <View key={opt.key}>
                 <TouchableOpacity
                   style={[
                     styles.optionCard,
                     isSelected &&
-                      (isRontgen
-                        ? styles.optionCardRontgen
-                        : styles.optionCardSelected),
+                      !isRontgen &&
+                      !isSelesai &&
+                      styles.optionCardSelected,
+                    isRontgen && styles.optionCardRontgen,
+                    isSelesai && styles.optionCardSelesai,
                   ]}
                   onPress={() => setSelected(opt.key)}
                   activeOpacity={0.7}
@@ -188,6 +252,7 @@ export default function UbahStatusPasien({
                       style={[
                         styles.optionLabel,
                         isRontgen && styles.optionLabelRontgen,
+                        isSelesai && styles.optionLabelSelesai,
                       ]}
                     >
                       {opt.label}
@@ -196,6 +261,7 @@ export default function UbahStatusPasien({
                       style={[
                         styles.optionDesc,
                         isRontgen && styles.optionDescRontgen,
+                        isSelesai && styles.optionDescSelesai,
                       ]}
                     >
                       {opt.desc}
@@ -205,9 +271,11 @@ export default function UbahStatusPasien({
                     style={[
                       styles.radio,
                       isSelected &&
-                        (isRontgen
-                          ? styles.radioRontgen
-                          : styles.radioSelected),
+                        !isRontgen &&
+                        !isSelesai &&
+                        styles.radioSelected,
+                      isRontgen && styles.radioRontgen,
+                      isSelesai && styles.radioSelesai,
                     ]}
                   >
                     {isSelected && (
@@ -215,12 +283,14 @@ export default function UbahStatusPasien({
                         style={[
                           styles.radioDot,
                           isRontgen && styles.radioDotRontgen,
+                          isSelesai && styles.radioDotSelesai,
                         ]}
                       />
                     )}
                   </View>
                 </TouchableOpacity>
 
+                {/* Sub-panel pilih jenis foto — hanya jika "Upload Foto" */}
                 {isRontgen && (
                   <View style={styles.fotoSection}>
                     <Text style={styles.fotoTitle}>
@@ -270,20 +340,46 @@ export default function UbahStatusPasien({
                     })}
                   </View>
                 )}
+
+                {/* Info banner — hanya jika "Selesai (Tanpa Foto)" dipilih */}
+                {isSelesai && (
+                  <View style={styles.selesaiInfoBox}>
+                    <Ionicons
+                      name="information-circle-outline"
+                      size={16}
+                      color="#1b8a5a"
+                    />
+                    <Text style={styles.selesaiInfoText}>
+                      Kamu tetap akan diarahkan ke form pemeriksaan untuk
+                      mengisi data fisik, keluhan, dan extra oral sebelum
+                      mencetak Medical Note.
+                    </Text>
+                  </View>
+                )}
               </View>
             );
           })}
 
+          {/* ── Tombol Aksi ────────────────────────────────────────────── */}
           <View style={styles.btnRow}>
-            <TouchableOpacity style={styles.btnBatal} onPress={handleClose}>
+            <TouchableOpacity
+              style={styles.btnBatal}
+              onPress={handleClose}
+              disabled={saving}
+            >
               <Text style={styles.btnBatalText}>Batal</Text>
             </TouchableOpacity>
             <TouchableOpacity
-              style={[styles.btnSimpan, !canSave && styles.btnSimpanDisabled]}
+              style={[
+                styles.btnSimpan,
+                (!canSave || saving) && styles.btnSimpanDisabled,
+              ]}
               onPress={handleSave}
-              disabled={!canSave}
+              disabled={!canSave || saving}
             >
-              <Text style={styles.btnSimpanText}>Simpan Status</Text>
+              <Text style={styles.btnSimpanText}>
+                {saving ? "Menyimpan..." : "Simpan Status"}
+              </Text>
             </TouchableOpacity>
           </View>
         </ScrollView>
@@ -291,6 +387,8 @@ export default function UbahStatusPasien({
     </Modal>
   );
 }
+
+// ── Styles ─────────────────────────────────────────────────────────────────────
 
 const styles = StyleSheet.create({
   backdrop: { flex: 1, backgroundColor: "rgba(0,0,0,0.3)" },
@@ -310,6 +408,8 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     marginBottom: 16,
   },
+
+  // Pasien Card
   pasienCard: {
     flexDirection: "row",
     alignItems: "center",
@@ -335,12 +435,15 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   pasienSub: { fontSize: 12, color: "#555" },
+
   title: {
     fontSize: 15,
     fontWeight: "bold",
     color: "#1a1a1a",
     marginBottom: 14,
   },
+
+  // Option Card
   optionCard: {
     flexDirection: "row",
     alignItems: "center",
@@ -354,6 +457,8 @@ const styles = StyleSheet.create({
   },
   optionCardSelected: { borderColor: "#34B3B9", backgroundColor: "#F0FAFA" },
   optionCardRontgen: { borderColor: "#e05c5c", backgroundColor: "#fde8e8" },
+  optionCardSelesai: { borderColor: "#1b8a5a", backgroundColor: "#edfaf3" },
+
   optionIcon: {
     width: 42,
     height: 42,
@@ -370,8 +475,12 @@ const styles = StyleSheet.create({
     marginBottom: 2,
   },
   optionLabelRontgen: { color: "#e05c5c" },
+  optionLabelSelesai: { color: "#1b8a5a" },
   optionDesc: { fontSize: 12, color: "#888" },
   optionDescRontgen: { color: "#e05c5c" },
+  optionDescSelesai: { color: "#1b8a5a" },
+
+  // Radio
   radio: {
     width: 22,
     height: 22,
@@ -383,6 +492,7 @@ const styles = StyleSheet.create({
   },
   radioSelected: { borderColor: "#34B3B9" },
   radioRontgen: { borderColor: "#e05c5c" },
+  radioSelesai: { borderColor: "#1b8a5a" },
   radioDot: {
     width: 10,
     height: 10,
@@ -390,6 +500,9 @@ const styles = StyleSheet.create({
     backgroundColor: "#34B3B9",
   },
   radioDotRontgen: { backgroundColor: "#e05c5c" },
+  radioDotSelesai: { backgroundColor: "#1b8a5a" },
+
+  // Sub-panel jenis foto
   fotoSection: {
     backgroundColor: "#E8F5F5",
     borderRadius: 14,
@@ -433,6 +546,23 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   checkboxChecked: { backgroundColor: "#34B3B9", borderColor: "#34B3B9" },
+
+  // Info banner selesai tanpa foto
+  selesaiInfoBox: {
+    flexDirection: "row",
+    alignItems: "flex-start",
+    backgroundColor: "#edfaf3",
+    borderRadius: 12,
+    padding: 12,
+    marginBottom: 10,
+    marginTop: -4,
+    gap: 8,
+    borderWidth: 1,
+    borderColor: "#a8e6c9",
+  },
+  selesaiInfoText: { flex: 1, fontSize: 12, color: "#1b8a5a", lineHeight: 18 },
+
+  // Tombol bawah
   btnRow: { flexDirection: "row", gap: 12, marginTop: 8, marginBottom: 8 },
   btnBatal: {
     flex: 1,

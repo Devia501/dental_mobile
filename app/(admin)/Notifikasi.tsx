@@ -1,7 +1,8 @@
 import { Ionicons } from "@expo/vector-icons";
-import { router } from "expo-router";
-import { useState } from "react";
+import { router, useFocusEffect } from "expo-router";
+import { useCallback, useState } from "react";
 import {
+  ActivityIndicator,
   ScrollView,
   StyleSheet,
   Text,
@@ -9,96 +10,84 @@ import {
   View,
 } from "react-native";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
+import { apiRequest } from "../../services/api";
 
 type Notif = {
   id: number;
-  judul: string;
-  pesan: string;
-  waktu: string;
-  dibaca: boolean;
-  aksen: string; // warna strip kiri
+  title: string;
+  message: string;
+  type: string;
+  is_read: boolean;
+  created_at: string;
 };
 
-const initialBaru: Notif[] = [
-  {
-    id: 1,
-    judul: "Segera Upload Rontgen",
-    pesan:
-      "Budi Santoso (No. 001) keluar ruangan. Dokter merekomendasikan foto rontgen segera.",
-    waktu: "3 menit lalu",
-    dibaca: false,
-    aksen: "#FF5C5C",
-  },
-  {
-    id: 2,
-    judul: "Pasien Masuk Ruangan",
-    pesan:
-      "Ahmad Fauzi (No. 003) telah dipanggil masuk ke ruang periksa dokter.",
-    waktu: "16 menit lalu",
-    dibaca: false,
-    aksen: "#7B8DE8",
-  },
-];
+const getAksen = (type: string) => {
+  switch (type) {
+    case "xray_uploaded":
+      return "#34B3B9";
+    case "patient_status_updated":
+      return "#7B8DE8";
+    default:
+      return "#34B3B9";
+  }
+};
 
-const initialSebelumnya: Notif[] = [
-  {
-    id: 3,
-    judul: "Foto Rontgen Tersimpan",
-    pesan:
-      "Foto rontgen Siti Rahayu (No. 002) berhasil diunggah dan tersimpan di server.",
-    waktu: "34 menit lalu",
-    dibaca: true,
-    aksen: "#34B3B9",
-  },
-  {
-    id: 4,
-    judul: "Catatan Klinis Kosong",
-    pesan:
-      "Foto rontgen Riko Pratama (No. 005) sudah diupload, namun keterangan pemeriksaan belum diisi.",
-    waktu: "52 menit lalu",
-    dibaca: true,
-    aksen: "#E8A030",
-  },
-  {
-    id: 5,
-    judul: "Laporan Harian Siap",
-    pesan:
-      "Laporan hari ini tersedia. 6 pasien hadir, 3 foto rontgen berhasil diupload.",
-    waktu: "3 jam lalu",
-    dibaca: true,
-    aksen: "#34B3B9",
-  },
-  {
-    id: 6,
-    judul: "Segera Upload Rontgen",
-    pesan:
-      "Dewi Lestari (No. 009) keluar ruangan. Dokter merekomendasikan foto rontgen segera.",
-    waktu: "3 menit lalu",
-    dibaca: true,
-    aksen: "#FF5C5C",
-  },
-];
+const formatWaktu = (dateStr: string) => {
+  const now = new Date();
+  const date = new Date(dateStr);
+  const diffMs = now.getTime() - date.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 60) return `${diffMins} menit lalu`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours} jam lalu`;
+  return `${Math.floor(diffHours / 24)} hari lalu`;
+};
 
 export default function Notifikasi() {
   const insets = useSafeAreaInsets();
-  const [baru, setBaru] = useState<Notif[]>(initialBaru);
-  const [sebelumnya, setSebelumnya] = useState<Notif[]>(initialSebelumnya);
+  const [notifs, setNotifs] = useState<Notif[]>([]);
+  const [loading, setLoading] = useState(true);
 
-  const tandaiSemuaDibaca = () => {
-    setBaru((prev) => prev.map((n) => ({ ...n, dibaca: true })));
+  useFocusEffect(
+    useCallback(() => {
+      fetchNotifs();
+    }, []),
+  );
+
+  const fetchNotifs = async () => {
+    setLoading(true);
+    try {
+      const res = await apiRequest("/admin/notifications", "GET", null, true);
+      if (res.success) setNotifs(res.data || []);
+    } catch (e) {
+      console.log("Error fetch notifs:", e);
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const tandaiSatu = (id: number) => {
-    setBaru((prev) =>
-      prev.map((n) => (n.id === id ? { ...n, dibaca: true } : n)),
-    );
+  const tandaiSatu = async (id: number) => {
+    try {
+      await apiRequest(`/admin/notifications/${id}/read`, "PUT", null, true);
+      setNotifs((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)),
+      );
+    } catch (e) {}
   };
 
-  const belumDibacaCount = baru.filter((n) => !n.dibaca).length;
+  const tandaiSemua = async () => {
+    try {
+      await apiRequest("/admin/notifications/read-all", "PUT", null, true);
+      setNotifs((prev) => prev.map((n) => ({ ...n, is_read: true })));
+    } catch (e) {}
+  };
+
+  const baru = notifs.filter((n) => !n.is_read);
+  const sebelumnya = notifs.filter((n) => n.is_read);
+  const belumDibacaCount = baru.length;
 
   return (
     <View style={[styles.container, { paddingTop: insets.top }]}>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
           <Ionicons name="arrow-back" size={22} color="#1a1a1a" />
@@ -114,74 +103,86 @@ export default function Notifikasi() {
         <View style={{ width: 36 }} />
       </View>
 
-      <ScrollView
-        showsVerticalScrollIndicator={false}
-        contentContainerStyle={{ paddingBottom: 40, paddingHorizontal: 16 }}
-      >
-        {/* ━━━━━ BARU ━━━━━ */}
-        {baru.length > 0 && (
-          <View>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.sectionLabel}>BARU</Text>
-              <TouchableOpacity onPress={tandaiSemuaDibaca}>
-                <Text style={styles.tandaiBtn}>Tandai dibaca</Text>
-              </TouchableOpacity>
+      {loading ? (
+        <ActivityIndicator
+          size="large"
+          color="#34B3B9"
+          style={{ marginTop: 40 }}
+        />
+      ) : (
+        <ScrollView
+          showsVerticalScrollIndicator={false}
+          contentContainerStyle={{ paddingBottom: 40, paddingHorizontal: 16 }}
+        >
+          {baru.length > 0 && (
+            <View>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionLabel}>BARU</Text>
+                <TouchableOpacity onPress={tandaiSemua}>
+                  <Text style={styles.tandaiBtn}>Tandai semua dibaca</Text>
+                </TouchableOpacity>
+              </View>
+              {baru.map((notif) => (
+                <TouchableOpacity
+                  key={notif.id}
+                  style={styles.card}
+                  onPress={() => tandaiSatu(notif.id)}
+                  activeOpacity={0.75}
+                >
+                  <View
+                    style={[
+                      styles.strip,
+                      { backgroundColor: getAksen(notif.type) },
+                    ]}
+                  />
+                  <View style={styles.cardContent}>
+                    <Text style={styles.cardJudul}>{notif.title}</Text>
+                    <Text style={styles.cardPesan}>{notif.message}</Text>
+                    <Text style={styles.cardWaktu}>
+                      {formatWaktu(notif.created_at)}
+                    </Text>
+                  </View>
+                  <View style={styles.dot} />
+                </TouchableOpacity>
+              ))}
             </View>
+          )}
 
-            {baru.map((notif) => (
-              <TouchableOpacity
-                key={notif.id}
-                style={styles.card}
-                onPress={() => tandaiSatu(notif.id)}
-                activeOpacity={0.75}
-              >
-                {/* Strip aksen kiri */}
-                <View
-                  style={[styles.strip, { backgroundColor: notif.aksen }]}
-                />
+          {sebelumnya.length > 0 && (
+            <View style={{ marginTop: 24 }}>
+              <Text style={[styles.sectionLabel, { marginBottom: 12 }]}>
+                SEBELUMNYA
+              </Text>
+              {sebelumnya.map((notif) => (
+                <TouchableOpacity
+                  key={notif.id}
+                  style={styles.card}
+                  activeOpacity={0.75}
+                >
+                  <View
+                    style={[styles.strip, { backgroundColor: "transparent" }]}
+                  />
+                  <View style={styles.cardContent}>
+                    <Text style={[styles.cardJudul, { color: "#555" }]}>
+                      {notif.title}
+                    </Text>
+                    <Text style={styles.cardPesan}>{notif.message}</Text>
+                    <Text style={styles.cardWaktu}>
+                      {formatWaktu(notif.created_at)}
+                    </Text>
+                  </View>
+                </TouchableOpacity>
+              ))}
+            </View>
+          )}
 
-                <View style={styles.cardContent}>
-                  <Text style={styles.cardJudul}>{notif.judul}</Text>
-                  <Text style={styles.cardPesan}>{notif.pesan}</Text>
-                  <Text style={styles.cardWaktu}>{notif.waktu}</Text>
-                </View>
-
-                {/* Dot belum dibaca */}
-                {!notif.dibaca && <View style={styles.dot} />}
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-
-        {/* ━━━━━ SEBELUMNYA ━━━━━ */}
-        {sebelumnya.length > 0 && (
-          <View style={{ marginTop: 24 }}>
-            <Text style={[styles.sectionLabel, { marginBottom: 12 }]}>
-              SEBELUMNYA
+          {notifs.length === 0 && (
+            <Text style={{ textAlign: "center", color: "#aaa", marginTop: 40 }}>
+              Tidak ada notifikasi
             </Text>
-
-            {sebelumnya.map((notif) => (
-              <TouchableOpacity
-                key={notif.id}
-                style={styles.card}
-                activeOpacity={0.75}
-              >
-                {/* Tidak ada strip untuk yang sudah dibaca */}
-                <View
-                  style={[styles.strip, { backgroundColor: "transparent" }]}
-                />
-                <View style={styles.cardContent}>
-                  <Text style={[styles.cardJudul, { color: "#555" }]}>
-                    {notif.judul}
-                  </Text>
-                  <Text style={styles.cardPesan}>{notif.pesan}</Text>
-                  <Text style={styles.cardWaktu}>{notif.waktu}</Text>
-                </View>
-              </TouchableOpacity>
-            ))}
-          </View>
-        )}
-      </ScrollView>
+          )}
+        </ScrollView>
+      )}
     </View>
   );
 }
@@ -228,9 +229,6 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     overflow: "hidden",
     elevation: 1,
-    shadowColor: "#000",
-    shadowOpacity: 0.04,
-    shadowRadius: 3,
   },
   strip: { width: 4 },
   cardContent: { flex: 1, padding: 14, gap: 4 },

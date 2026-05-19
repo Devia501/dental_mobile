@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
-import { router, useLocalSearchParams } from "expo-router";
-import { useEffect, useState } from "react";
+import { router, useFocusEffect, useLocalSearchParams } from "expo-router";
+import { useCallback, useEffect, useState } from "react";
 import {
   Image,
   ScrollView,
@@ -17,6 +17,7 @@ import Animated, {
   useSharedValue,
 } from "react-native-reanimated";
 import AppHeader from "../../../components/shared/AppHeader";
+import { useUnreadNotif } from "../../../hooks/useUnreadNotif";
 import { getRontgenList } from "../../../services/rontgenService";
 
 const HEADER_HEIGHT = 100;
@@ -39,6 +40,13 @@ const getFotoIcon = (key: string) => {
   }
 };
 
+// PERBAIKAN: normalisasi semua alias ke key canonical
+// "xray" dari backend lama → "rontgen_xray" agar label dan warna konsisten
+const normalizeKey = (key: string): string => {
+  if (key === "xray") return "rontgen_xray";
+  return key;
+};
+
 const fotoLabel: Record<string, string> = {
   rontgen_xray: "Rontgen (X-Ray)",
   profil_gigi: "Profil Gigi",
@@ -51,6 +59,9 @@ const fotoTagColor: Record<string, { bg: string; text: string }> = {
   intraoral: { bg: "#F3E8FF", text: "#B57BDD" },
 };
 
+// Key yang valid untuk ditampilkan sebagai tag
+const VALID_FOTO_KEYS = new Set(Object.keys(fotoLabel));
+
 const timeFilters = ["All Time", "Today", "This Week"];
 
 export default function Rontgen() {
@@ -59,8 +70,8 @@ export default function Rontgen() {
   const [activeTime, setActiveTime] = useState("All Time");
   const [search, setSearch] = useState("");
   const scrollY = useSharedValue(0);
+  const unreadCount = useUnreadNotif();
 
-  // Data dari API
   const [pasienRontgen, setPasienRontgen] = useState<any[]>([]);
   const [historyData, setHistoryData] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
@@ -69,78 +80,155 @@ export default function Rontgen() {
     if (params.tab === "history") setActiveTab("history");
   }, [params.tab]);
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      fetchData();
+    }, []),
+  );
 
-  const fetchData = async () => {
+  const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      // Ambil yang perlu upload foto
-      const perluUpload = await getRontgenList("perlu_upload_foto");
-      if (perluUpload.success && perluUpload.data?.rontgens) {
-        const list = perluUpload.data.rontgens.map((r: any) => ({
-          id: r.id,
-          nama: r.patient?.name || "-",
-          no: String(r.id).padStart(3, "0"),
-          jam: "-",
-          umur: "-",
-          fotoKeys: ["rontgen_xray", "profil_gigi", "intraoral"],
-          patientId: r.patient?.id,
-          doctorId: r.doctor?.id,
-        }));
-        setPasienRontgen(list);
-      }
+      const [resAntrian, resHistory] = await Promise.all([
+        // PERBAIKAN: status harus konsisten dengan yang dikirim createRontgen
+        getRontgenList("perlu_upload_foto"),
+        getRontgenList("selesai"),
+      ]);
 
-      // Ambil semua rontgen untuk history
-      const allRontgen = await getRontgenList();
-      if (allRontgen.success && allRontgen.data?.rontgens) {
-        // Group by tanggal
-        const grouped: Record<string, any[]> = {};
-        allRontgen.data.rontgens.forEach((r: any) => {
-          const tgl = r.created_at?.split(" ")[0] || "Unknown";
-          if (!grouped[tgl]) grouped[tgl] = [];
-          grouped[tgl].push(r);
-        });
+      // ── Tab "Perlu Upload Foto" ────────────────────────────────────────────
+      if (resAntrian.success && resAntrian.data?.rontgens) {
+        const list = resAntrian.data.rontgens.map((r: any) => {
+          // Fallback chain fotoKeys:
+          // 1. target_foto dari DB  → paling akurat, butuh backend simpan field ini
+          // 2. examination_images   → foto yang sudah pernah diupload sebelumnya
+          // 3. ["rontgen_xray"]     → default terakhir
+          //
+          // Jika selalu jatuh ke (3), berarti backend belum simpan target_foto.
+          // Fix: pastikan kolom target_foto ada di $fillable model Rontgen Laravel.
+          let fotoKeys: string[] = [];
 
-        const history = Object.entries(grouped).map(([tgl, items]) => ({
-          tanggal: tgl,
-          items: items.map((r: any) => ({
+          if (r.target_foto) {
+            fotoKeys = r.target_foto
+              .split(",")
+              .map((k: string) => normalizeKey(k.trim()))
+              .filter((k: string) => VALID_FOTO_KEYS.has(k));
+          }
+
+          if (fotoKeys.length === 0 && r.examination_images?.length > 0) {
+            const fromImages = [
+              ...new Set(
+                r.examination_images
+                  .map((img: any) => normalizeKey(img.image_type || ""))
+                  .filter((k: string) => VALID_FOTO_KEYS.has(k)),
+              ),
+            ] as string[];
+            fotoKeys = fromImages;
+          }
+
+          if (fotoKeys.length === 0) {
+            // Ini artinya target_foto belum tersimpan di backend.
+            // Tampilkan semua opsi agar user bisa pilih sendiri di upload screen.
+            console.warn(
+              `[Rontgen] target_foto null untuk rontgenId=${r.id}. Cek $fillable di model Rontgen.`,
+            );
+            fotoKeys = ["rontgen_xray"];
+          }
+
+          return {
             id: r.id,
             nama: r.patient?.name || "-",
-            jam: r.created_at?.split(" ")[1]?.slice(0, 5) || "-",
-            judul: r.detail || "Pemeriksaan",
-            deskripsi: r.detail || "-",
-            fotoKeys: [...new Set(r.tags?.map((t: any) => t.tag_name) || [])],
-            foto: r.latest_image_url || null,
             no: String(r.id).padStart(3, "0"),
-            umur: "-",
+            jam: r.created_at ? r.created_at.split(" ")[1]?.slice(0, 5) : "-",
+            umur: r.patient?.age ? `${r.patient.age} th` : "-",
+            fotoKeys,
+            patientId: r.patient?.id,
+            doctorId: r.doctor?.id,
+          };
+        });
+        setPasienRontgen(list);
+      } else {
+        setPasienRontgen([]);
+      }
+
+      // ── Tab "History" ─────────────────────────────────────────────────────
+      if (resHistory.success && resHistory.data?.rontgens) {
+        const allRontgens = resHistory.data.rontgens;
+
+        const grouped: Record<string, any[]> = {};
+        allRontgens.forEach((r: any) => {
+          const tanggal = r.created_at?.split(" ")[0] || "Unknown";
+          if (!grouped[tanggal]) grouped[tanggal] = [];
+
+          const images = r.examination_images || [];
+
+          // PERBAIKAN: normalisasi semua key dari images, lalu filter hanya yang valid
+          // agar tidak muncul bubble kosong (undefined label)
+          const fotoKeySet = new Set<string>();
+          images
+            .map((img: any) => normalizeKey(img.image_type || ""))
+            .filter((k: string) => VALID_FOTO_KEYS.has(k))
+            .forEach((k: string) => fotoKeySet.add(k));
+
+          const firstImage = images.find((img: any) => img.image_url);
+
+          grouped[tanggal].push({
+            id: r.id,
+            rontgenId: r.id,
+            nama: r.patient?.name || "-",
+            jam: r.created_at?.split(" ")[1]?.slice(0, 5) || "-",
+            judul: r.doctor?.name ? `${r.doctor.name}` : "Pemeriksaan Rontgen",
+            deskripsi: r.detail || "Tidak ada catatan",
+            foto: firstImage?.image_url || null,
+            // PERBAIKAN: Array dari Set sudah bersih, tidak ada key asing
+            fotoKeys: Array.from(fotoKeySet),
+            no: String(r.id).padStart(3, "0"),
+            umur: r.patient?.age ? `${r.patient.age} th` : "-",
             dokter: r.doctor?.name || "-",
             notes: r.detail || "",
             fotoRontgen: String(
-              r.examination_images?.filter((i: any) => i.image_type === "xray")
-                .length || 0,
+              images.filter(
+                (i: any) =>
+                  i.image_type === "xray" || i.image_type === "rontgen_xray",
+              ).length,
             ),
             fotoProfil: String(
-              r.examination_images?.filter(
-                (i: any) => i.image_type === "profil_gigi",
-              ).length || 0,
+              images.filter((i: any) => i.image_type === "profil_gigi").length,
             ),
             fotoIntraoral: String(
-              r.examination_images?.filter(
-                (i: any) => i.image_type === "intraoral",
-              ).length || 0,
+              images.filter((i: any) => i.image_type === "intraoral").length,
             ),
-            rontgenId: r.id,
-          })),
-        }));
-        setHistoryData(history);
+          });
+        });
+
+        const sortedGroups = Object.keys(grouped)
+          .sort((a, b) => (a > b ? -1 : 1))
+          .map((tgl) => ({ tanggal: tgl, items: grouped[tgl] }));
+
+        setHistoryData(sortedGroups);
+      } else {
+        setHistoryData([]);
       }
     } catch (error) {
       console.log("Error fetch rontgen:", error);
     } finally {
       setLoading(false);
     }
+  }, []);
+
+  const goToUpload = (pasien: any) => {
+    router.push({
+      pathname: "/(admin)/Uploadfotopasien ",
+      params: {
+        rontgenId: String(pasien.id),
+        nama: pasien.nama,
+        no: pasien.no,
+        jam: pasien.jam,
+        umur: pasien.umur,
+        fotoKeys: pasien.fotoKeys.join(","),
+        doctorId: String(pasien.doctorId || ""),
+        patientId: String(pasien.patientId || ""),
+      },
+    });
   };
 
   const scrollHandler = useAnimatedScrollHandler({
@@ -165,25 +253,40 @@ export default function Rontgen() {
   const goToExamDetails = (item: any) => {
     router.push({
       pathname: "/(admin)/ExamDetails",
-      params: {
-        rontgenId: item.rontgenId,
-        nama: item.nama,
-        no: item.no,
-        jam: item.jam,
-        umur: item.umur,
-        dokter: item.dokter,
-        notes: item.notes,
-        fotoRontgen: item.fotoRontgen,
-        fotoProfil: item.fotoProfil,
-        fotoIntraoral: item.fotoIntraoral,
-      },
+      params: { ...item },
     });
+  };
+
+  const getFilteredHistory = () => {
+    const now = new Date();
+    const todayStr = now.toISOString().split("T")[0];
+
+    return historyData
+      .map((group) => {
+        if (activeTime === "Today" && group.tanggal !== todayStr) return null;
+        if (activeTime === "This Week") {
+          const itemDate = new Date(group.tanggal);
+          const diff =
+            (now.getTime() - itemDate.getTime()) / (1000 * 3600 * 24);
+          if (diff > 7) return null;
+        }
+
+        const filteredItems = group.items.filter(
+          (item: any) =>
+            search === "" ||
+            item.nama.toLowerCase().includes(search.toLowerCase()),
+        );
+
+        if (filteredItems.length === 0) return null;
+        return { ...group, items: filteredItems };
+      })
+      .filter(Boolean);
   };
 
   return (
     <View style={styles.container}>
       <Animated.View style={[styles.headerWrapper, headerStyle]}>
-        <AppHeader scrollY={scrollY} />
+        <AppHeader scrollY={scrollY} unreadCount={unreadCount} />
       </Animated.View>
 
       <Animated.ScrollView
@@ -195,7 +298,6 @@ export default function Rontgen() {
           paddingBottom: 100,
         }}
       >
-        {/* Tab Switcher */}
         <View style={styles.tabWrapper}>
           <TouchableOpacity
             style={[styles.tab, activeTab === "rontgen" && styles.tabActive]}
@@ -225,7 +327,7 @@ export default function Rontgen() {
           </TouchableOpacity>
         </View>
 
-        {/* ============ TAB RONTGEN ============ */}
+        {/* ── Tab: Perlu Upload Foto ──────────────────────────────────────── */}
         {activeTab === "rontgen" && (
           <View>
             <Text style={styles.pageTitle}>Upload Rontgen</Text>
@@ -241,10 +343,10 @@ export default function Rontgen() {
             </View>
 
             {loading ? (
-              <Text style={styles.emptyText}>Loading...</Text>
+              <Text style={styles.emptyText}>Memuat data...</Text>
             ) : pasienRontgen.length === 0 ? (
               <Text style={styles.emptyText}>
-                Tidak ada pasien yang perlu upload foto
+                Tidak ada antrean foto hari ini
               </Text>
             ) : (
               <View style={styles.listWrapper}>
@@ -253,21 +355,7 @@ export default function Rontgen() {
                     key={pasien.id}
                     style={styles.card}
                     activeOpacity={0.7}
-                    onPress={() =>
-                      router.push({
-                        pathname: "/(admin)/Uploadfotopasien",
-                        params: {
-                          nama: pasien.nama,
-                          no: pasien.no,
-                          jam: pasien.jam,
-                          umur: pasien.umur,
-                          fotoKeys: pasien.fotoKeys.join(","),
-                          rontgenId: String(pasien.id),
-                          patientId: String(pasien.patientId),
-                          doctorId: String(pasien.doctorId),
-                        },
-                      })
-                    }
+                    onPress={() => goToUpload(pasien)}
                   >
                     <View style={styles.avatar}>
                       <Ionicons name="person" size={24} color="#2E9DA4" />
@@ -279,11 +367,13 @@ export default function Rontgen() {
                       </Text>
                       <View style={styles.tagRow}>
                         {pasien.fotoKeys.map((key: string) => {
-                          const icon = getFotoIcon(key);
                           const color = fotoTagColor[key] || {
                             bg: "#E2F0F1",
                             text: "#34B3B9",
                           };
+                          const label = fotoLabel[key];
+                          // PERBAIKAN: skip render jika label tidak ditemukan
+                          if (!label) return null;
                           return (
                             <View
                               key={key}
@@ -292,23 +382,13 @@ export default function Rontgen() {
                                 { backgroundColor: color.bg },
                               ]}
                             >
-                              {icon && (
-                                <Image
-                                  source={icon}
-                                  style={[
-                                    styles.fotoTagIcon,
-                                    { tintColor: color.text },
-                                  ]}
-                                  resizeMode="contain"
-                                />
-                              )}
                               <Text
                                 style={[
                                   styles.fotoTagText,
                                   { color: color.text },
                                 ]}
                               >
-                                {fotoLabel[key]}
+                                {label}
                               </Text>
                             </View>
                           );
@@ -328,29 +408,23 @@ export default function Rontgen() {
           </View>
         )}
 
-        {/* ============ TAB HISTORY ============ */}
+        {/* ── Tab: History ───────────────────────────────────────────────── */}
         {activeTab === "history" && (
           <View>
             <Text style={styles.pageTitle}>Examination History</Text>
-
-            {/* Search + Filter */}
             <View style={styles.searchRow}>
               <View style={styles.searchWrapper}>
                 <Ionicons name="search-outline" size={16} color="#aaa" />
                 <TextInput
                   style={styles.searchInput}
-                  placeholder="Search patients..."
+                  placeholder="Cari nama pasien..."
                   placeholderTextColor="#aaa"
                   value={search}
                   onChangeText={setSearch}
                 />
               </View>
-              <TouchableOpacity style={styles.filterBtn}>
-                <Ionicons name="options-outline" size={20} color="#555" />
-              </TouchableOpacity>
             </View>
 
-            {/* Time Filter */}
             <ScrollView
               horizontal
               showsHorizontalScrollIndicator={false}
@@ -378,73 +452,70 @@ export default function Rontgen() {
             </ScrollView>
 
             {loading ? (
-              <Text style={styles.emptyText}>Loading...</Text>
+              <Text style={styles.emptyText}>Memuat history...</Text>
             ) : historyData.length === 0 ? (
-              <Text style={styles.emptyText}>Belum ada history rontgen</Text>
+              <Text style={styles.emptyText}>
+                Belum ada riwayat pemeriksaan
+              </Text>
             ) : (
-              historyData.map((group, gIndex) => (
+              getFilteredHistory().map((group: any, gIndex: number) => (
                 <View key={gIndex}>
                   <Text style={styles.groupDate}>{group.tanggal}</Text>
-                  {group.items
-                    .filter(
-                      (item: any) =>
-                        search === "" ||
-                        item.nama.toLowerCase().includes(search.toLowerCase()),
-                    )
-                    .map((item: any) => (
-                      <TouchableOpacity
-                        key={item.id}
-                        style={styles.historyCard}
-                        onPress={() => goToExamDetails(item)}
-                        activeOpacity={0.7}
-                      >
-                        <View style={styles.fotoWrapper}>
-                          {item.foto ? (
-                            <Image
-                              source={{ uri: item.foto }}
-                              style={styles.foto}
-                              resizeMode="cover"
+                  {group.items.map((item: any) => (
+                    <TouchableOpacity
+                      key={item.id}
+                      style={styles.historyCard}
+                      onPress={() => goToExamDetails(item)}
+                      activeOpacity={0.7}
+                    >
+                      <View style={styles.fotoWrapper}>
+                        {item.foto ? (
+                          <Image
+                            source={{ uri: item.foto }}
+                            style={styles.foto}
+                            resizeMode="cover"
+                          />
+                        ) : (
+                          <View style={styles.fotoPlaceholder}>
+                            <Ionicons
+                              name="camera-outline"
+                              size={26}
+                              color="#aaa"
                             />
-                          ) : (
-                            <View style={styles.fotoPlaceholder}>
-                              <Ionicons
-                                name="image-outline"
-                                size={28}
-                                color="#aaa"
-                              />
-                            </View>
-                          )}
-                        </View>
-
-                        <View
-                          style={[
-                            styles.info,
-                            { justifyContent: "space-between" },
-                          ]}
-                        >
-                          <View style={styles.namaRow}>
-                            <Text style={styles.nama}>{item.nama}</Text>
-                            <Text style={styles.jam}>{item.jam}</Text>
+                            <Text
+                              style={{
+                                fontSize: 9,
+                                color: "#aaa",
+                                marginTop: 4,
+                                textAlign: "center",
+                              }}
+                            >
+                              Tanpa{"\n"}foto
+                            </Text>
                           </View>
-                          <Text style={styles.judul}>{item.judul}</Text>
-                          <Text style={styles.deskripsi} numberOfLines={2}>
-                            {item.deskripsi}
-                          </Text>
-                          <View style={styles.tagRow}>
-                            {["rontgen_xray", "profil_gigi", "intraoral"]
-                              .filter(
-                                (key) =>
-                                  Number(
-                                    key === "rontgen_xray"
-                                      ? item.fotoRontgen
-                                      : key === "profil_gigi"
-                                        ? item.fotoProfil
-                                        : item.fotoIntraoral,
-                                  ) > 0,
-                              )
-                              .map((key) => {
-                                const icon = getFotoIcon(key);
+                        )}
+                      </View>
+                      <View
+                        style={[
+                          styles.info,
+                          { justifyContent: "space-between" },
+                        ]}
+                      >
+                        <View style={styles.namaRow}>
+                          <Text style={styles.nama}>{item.nama}</Text>
+                          <Text style={styles.jam}>{item.jam}</Text>
+                        </View>
+                        <Text style={styles.judul}>{item.judul}</Text>
+                        <Text style={styles.deskripsi} numberOfLines={2}>
+                          {item.deskripsi}
+                        </Text>
+                        <View style={styles.tagRow}>
+                          {/* PERBAIKAN: hanya render jika fotoKeys ada isinya dan label valid */}
+                          {item.fotoKeys.length > 0
+                            ? item.fotoKeys.map((key: string) => {
+                                const label = fotoLabel[key];
                                 const color = fotoTagColor[key];
+                                if (!label || !color) return null;
                                 return (
                                   <View
                                     key={key}
@@ -453,31 +524,23 @@ export default function Rontgen() {
                                       { backgroundColor: color.bg },
                                     ]}
                                   >
-                                    {icon && (
-                                      <Image
-                                        source={icon}
-                                        style={[
-                                          styles.fotoTagIcon,
-                                          { tintColor: color.text },
-                                        ]}
-                                        resizeMode="contain"
-                                      />
-                                    )}
                                     <Text
                                       style={[
                                         styles.fotoTagText,
                                         { color: color.text },
                                       ]}
                                     >
-                                      {fotoLabel[key]}
+                                      {label}
                                     </Text>
                                   </View>
                                 );
-                              })}
-                          </View>
+                              })
+                            : // Tidak render tag apapun jika fotoKeys kosong
+                              null}
                         </View>
-                      </TouchableOpacity>
-                    ))}
+                      </View>
+                    </TouchableOpacity>
+                  ))}
                 </View>
               ))
             )}
@@ -541,6 +604,12 @@ const styles = StyleSheet.create({
   tipsIcon: { width: 25, height: 25 },
   tipsText: { flex: 1, fontSize: 12, color: "#2E9DA4", lineHeight: 18 },
   listWrapper: { paddingHorizontal: 16 },
+  emptyText: {
+    textAlign: "center",
+    color: "#aaa",
+    marginTop: 40,
+    fontSize: 14,
+  },
   card: {
     backgroundColor: "#fff",
     borderRadius: 12,
@@ -549,9 +618,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 16,
     elevation: 2,
-    shadowColor: "#000",
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
     gap: 12,
   },
   avatar: {
@@ -565,8 +631,6 @@ const styles = StyleSheet.create({
   info: { flex: 1, gap: 4 },
   nama: { fontSize: 15, fontWeight: "600", color: "#1a1a1a" },
   sub: { fontSize: 12, color: "#888" },
-
-  // ✅ Foto tags
   tagRow: { flexDirection: "row", flexWrap: "wrap", gap: 5, marginTop: 2 },
   fotoTag: {
     flexDirection: "row",
@@ -576,9 +640,7 @@ const styles = StyleSheet.create({
     borderRadius: 20,
     gap: 4,
   },
-  fotoTagIcon: { width: 11, height: 11 },
   fotoTagText: { fontSize: 10, fontWeight: "600" },
-
   rontgenIcon: { backgroundColor: "#34B3B9", padding: 4, borderRadius: 12 },
   cameraIcon: { width: 25, height: 25 },
   searchRow: {
@@ -595,11 +657,10 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
     borderRadius: 12,
     paddingHorizontal: 12,
-    paddingVertical: 10,
+    paddingVertical: 4,
     gap: 8,
   },
   searchInput: { flex: 1, fontSize: 13, color: "#333" },
-  filterBtn: { backgroundColor: "#fff", padding: 10, borderRadius: 12 },
   timeFilterWrapper: { paddingHorizontal: 16, gap: 8, marginBottom: 20 },
   timeBtn: {
     paddingHorizontal: 16,
@@ -630,9 +691,6 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     gap: 12,
     elevation: 2,
-    shadowColor: "#000",
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
   },
   fotoWrapper: { width: 80, height: 100, borderRadius: 10, overflow: "hidden" },
   foto: { width: "100%", height: "100%" },
@@ -652,10 +710,4 @@ const styles = StyleSheet.create({
   jam: { fontSize: 11, color: "#888" },
   judul: { fontSize: 12, color: "#2E9DA4", fontWeight: "600" },
   deskripsi: { fontSize: 11, color: "#666", lineHeight: 16 },
-  emptyText: {
-    textAlign: "center",
-    color: "#aaa",
-    marginTop: 40,
-    fontSize: 14,
-  },
 });

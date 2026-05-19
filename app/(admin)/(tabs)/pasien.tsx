@@ -1,6 +1,6 @@
 import { Ionicons } from "@expo/vector-icons";
-import { router } from "expo-router";
-import { useEffect, useState } from "react";
+import { router, useFocusEffect } from "expo-router";
+import { useCallback, useState } from "react";
 import {
   Image,
   ScrollView,
@@ -18,6 +18,7 @@ import Animated, {
 import StatusBerhasil from "../../../components/beranda/Statusberhasil";
 import UbahStatusPasien from "../../../components/beranda/Ubahstatuspasien";
 import AppHeader from "../../../components/shared/AppHeader";
+import { useUnreadNotif } from "../../../hooks/useUnreadNotif";
 import {
   createRontgen,
   getPasienHadir,
@@ -111,10 +112,13 @@ export default function Pasien() {
   );
   const [pendingNav, setPendingNav] = useState<(() => void) | null>(null);
   const scrollY = useSharedValue(0);
+  const unreadCount = useUnreadNotif();
 
-  useEffect(() => {
-    fetchPasien();
-  }, []);
+  useFocusEffect(
+    useCallback(() => {
+      fetchPasien();
+    }, []),
+  );
 
   const fetchPasien = async () => {
     try {
@@ -269,7 +273,7 @@ export default function Pasien() {
   return (
     <View style={styles.container}>
       <Animated.View style={[styles.headerWrapper, headerStyle]}>
-        <AppHeader scrollY={scrollY} />
+        <AppHeader scrollY={scrollY} unreadCount={unreadCount} />
       </Animated.View>
 
       <Animated.ScrollView

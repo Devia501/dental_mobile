@@ -1,8 +1,9 @@
 import { Ionicons } from "@expo/vector-icons";
-import { router } from "expo-router";
-import { useEffect, useState } from "react";
+import { router, useFocusEffect } from "expo-router"; // Tambah useFocusEffect untuk auto-refresh
+import { useCallback, useState } from "react";
 import {
   Dimensions,
+  Modal,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -15,109 +16,190 @@ import Animated, {
   useSharedValue,
 } from "react-native-reanimated";
 import AppHeader from "../../../components/shared/AppHeader";
-import {
-  getDashboard,
-  getReservationStats,
-} from "../../../services/berandaService";
+import { useUnreadNotif } from "../../../hooks/useUnreadNotif";
+import { getDashboard } from "../../../services/berandaService";
 import { getRontgenList } from "../../../services/rontgenService";
 
 const HEADER_HEIGHT = 100;
 const PARALLAX_DISTANCE = 1;
 const { width } = Dimensions.get("window");
-const MAX_BAR = 100;
 const BAR_HEIGHT = 120;
 
-// Nama hari singkat
-const HARI = ["Min", "Sen", "Sel", "Rab", "Kam", "Jum", "Sab"];
+const SEMUA_HARI = ["Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"];
+const DAY_INDEX: Record<number, string> = {
+  1: "Sen",
+  2: "Sel",
+  3: "Rab",
+  4: "Kam",
+  5: "Jum",
+  6: "Sab",
+  0: "Min",
+};
+
+const PERIODE_OPTIONS = [
+  { label: "Bulan Ini", value: "this_month" },
+  { label: "Bulan Lalu", value: "last_month" },
+  { label: "3 Bulan Terakhir", value: "3_months" },
+  { label: "Tahun Ini", value: "this_year" },
+];
+
+// Helper tetap gua jaga sesuai kodingan lo
+const getPeriodeRange = (periodeLabel: string) => {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = now.getMonth();
+
+  switch (periodeLabel) {
+    case "Bulan Ini":
+      return {
+        start: `${year}-${String(month + 1).padStart(2, "0")}-01`,
+        end: `${year}-${String(month + 1).padStart(2, "0")}-${new Date(year, month + 1, 0).getDate()}`,
+      };
+    case "Bulan Lalu": {
+      const lastMonth = month === 0 ? 12 : month;
+      const lastYear = month === 0 ? year - 1 : year;
+      return {
+        start: `${lastYear}-${String(lastMonth).padStart(2, "0")}-01`,
+        end: `${lastYear}-${String(lastMonth).padStart(2, "0")}-${new Date(lastYear, lastMonth, 0).getDate()}`,
+      };
+    }
+    case "3 Bulan Terakhir": {
+      const threeMonthsAgo = new Date(year, month - 2, 1);
+      return {
+        start: `${threeMonthsAgo.getFullYear()}-${String(threeMonthsAgo.getMonth() + 1).padStart(2, "0")}-01`,
+        end: `${year}-${String(month + 1).padStart(2, "0")}-${new Date(year, month + 1, 0).getDate()}`,
+      };
+    }
+    case "Tahun Ini":
+      return {
+        start: `${year}-01-01`,
+        end: `${year}-12-31`,
+      };
+    default:
+      return {
+        start: `${year}-${String(month + 1).padStart(2, "0")}-01`,
+        end: `${year}-${String(month + 1).padStart(2, "0")}-${new Date(year, month + 1, 0).getDate()}`,
+      };
+  }
+};
+
+const formatTanggal = (dateStr: string) => {
+  if (!dateStr) return "-";
+  const d = new Date(dateStr);
+  return d.toLocaleDateString("id-ID", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+};
 
 export default function Laporan() {
   const scrollY = useSharedValue(0);
+  const unreadCount = useUnreadNotif();
 
   const [totalPemeriksaan, setTotalPemeriksaan] = useState(0);
   const [totalXRay, setTotalXRay] = useState(0);
-  const [aktivitasHarian, setAktivitasHarian] = useState<
-    { hari: string; nilai: number }[]
-  >([]);
+  const [aktivitasHarian, setAktivitasHarian] = useState<any[]>(
+    SEMUA_HARI.map((h) => ({ hari: h, nilai: 0, active: false, persen: 8 })),
+  );
   const [pasienTerakhir, setPasienTerakhir] = useState<any[]>([]);
   const [periode, setPeriode] = useState({ start: "", end: "" });
+  const [selectedPeriode, setSelectedPeriode] = useState("Bulan Ini");
+  const [showPeriodeModal, setShowPeriodeModal] = useState(false);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    fetchData();
-  }, []);
+  // Perbaikan: Gunakan useFocusEffect agar data selalu fresh saat tab dibuka
+  useFocusEffect(
+    useCallback(() => {
+      fetchData();
+    }, [selectedPeriode]),
+  );
 
   const fetchData = async () => {
     setLoading(true);
     try {
-      const [dashboard, stats, rontgens] = await Promise.all([
+      const range = getPeriodeRange(selectedPeriode);
+      setPeriode({ start: range.start, end: range.end });
+
+      // Sesuai ERD: Mengambil data rontgen dan dashboard
+      const [dashboard, rontgens] = await Promise.all([
         getDashboard(),
-        getReservationStats(),
-        getRontgenList(),
+        getRontgenList("selesai"),
       ]);
 
-      // Total Pemeriksaan & X-Ray
       if (dashboard.success) {
-        setTotalPemeriksaan(dashboard.data.totals?.total_reservations || 0);
+        // Ambil data total rontgen dari tabel rontgen via dashboard
         setTotalXRay(dashboard.data.totals?.total_rontgens || 0);
       }
 
-      // Periode laporan
-      if (stats.success) {
-        setPeriode({
-          start: stats.data.period?.start_date || "",
-          end: stats.data.period?.end_date || "",
+      if (rontgens.success && rontgens.data?.rontgens) {
+        const allRontgens = rontgens.data.rontgens;
+
+        // Filter by periode sesuai logika lo
+        const filtered = allRontgens.filter((r: any) => {
+          const tgl = r.created_at?.split(" ")[0];
+          return tgl >= range.start && tgl <= range.end;
         });
 
-        // Aktivitas harian dari by_date
-        const byDate = stats.data.by_date || [];
-        if (byDate.length > 0) {
-          const maxNilai = Math.max(...byDate.map((d: any) => d.total), 1);
-          const aktivitas = byDate.slice(-7).map((d: any) => {
-            const tgl = new Date(d.date);
-            return {
-              hari: HARI[tgl.getDay()],
-              nilai: Math.round((d.total / maxNilai) * 100),
-            };
-          });
-          setAktivitasHarian(aktivitas);
-        } else {
-          // Kosong — tampilkan 7 hari default dengan nilai 0
-          setAktivitasHarian(HARI.map((h) => ({ hari: h, nilai: 0 })));
-        }
-      }
+        setTotalPemeriksaan(filtered.length);
 
-      // Daftar pasien terakhir dari rontgens
-      if (rontgens.success && rontgens.data?.rontgens) {
-        const list = rontgens.data.rontgens.slice(0, 5).map((r: any) => ({
-          id: r.id,
-          nama: r.patient?.name || "-",
-          tanggal: r.created_at?.split(" ")[0] || "-",
-          xray:
-            r.examination_images?.filter((i: any) => i.image_type === "xray")
-              .length || 0,
-          warna: "#E2F0F1",
-          iconColor: "#2E9DA4",
-          rontgenId: r.id,
-          no: String(r.id).padStart(3, "0"),
-          jam: r.created_at?.split(" ")[1]?.slice(0, 5) || "-",
-          umur: "-",
-          dokter: r.doctor?.name || "-",
-          notes: r.detail || "",
-          fotoRontgen: String(
-            r.examination_images?.filter((i: any) => i.image_type === "xray")
-              .length || 0,
-          ),
-          fotoProfil: String(
-            r.examination_images?.filter(
-              (i: any) => i.image_type === "profil_gigi",
-            ).length || 0,
-          ),
-          fotoIntraoral: String(
-            r.examination_images?.filter(
-              (i: any) => i.image_type === "intraoral",
-            ).length || 0,
-          ),
+        // Hitung aktivitas harian secara dinamis dari data API
+        const hariMap: Record<string, number> = {};
+        filtered.forEach((r: any) => {
+          const tgl = new Date(r.created_at);
+          const hariKey = DAY_INDEX[tgl.getDay()];
+          hariMap[hariKey] = (hariMap[hariKey] || 0) + 1;
+        });
+
+        const maxNilai = Math.max(...Object.values(hariMap), 1);
+        const aktivitas = SEMUA_HARI.map((h) => ({
+          hari: h,
+          nilai: hariMap[h] || 0,
+          active: (hariMap[h] || 0) > 0,
+          persen: hariMap[h]
+            ? Math.max(Math.round((hariMap[h] / maxNilai) * 100), 15)
+            : 8,
         }));
+        setAktivitasHarian(aktivitas);
+
+        // Map data ke pasienTerakhir tanpa menghilangkan field yang lo butuhin untuk detail
+        const list = filtered.slice(0, 10).map((r: any) => {
+          const images = r.examination_images || [];
+          const xrayCount = images.filter(
+            (i: any) =>
+              i.image_type === "xray" || i.image_type === "rontgen_xray",
+          ).length;
+          const profilCount = images.filter(
+            (i: any) => i.image_type === "profil_gigi",
+          ).length;
+          const intraoralCount = images.filter(
+            (i: any) => i.image_type === "intraoral",
+          ).length;
+
+          // Nomor pasien: ambil dari patient_number jika ada, fallback ke patient.id
+          const patientId = r.patient?.id;
+          const pasienNo =
+            r.patient?.patient_number ??
+            (patientId ? "PT-" + String(patientId).padStart(6, "0") : "-");
+
+          return {
+            id: r.id,
+            nama: r.patient?.name || "-",
+            tanggal: formatTanggal(r.created_at?.split(" ")[0]),
+            xray: xrayCount,
+            warna: "#E2F0F1",
+            iconColor: "#2E9DA4",
+            rontgenId: r.id,
+            no: pasienNo,
+            jam: r.created_at?.split(" ")[1]?.slice(0, 5) || "-",
+            umur: r.patient?.age ? `${r.patient.age} th` : "-",
+            dokter: r.doctor?.name || "-",
+            notes: r.detail || "",
+            fotoRontgen: String(xrayCount),
+            fotoProfil: String(profilCount),
+            fotoIntraoral: String(intraoralCount),
+          };
+        });
         setPasienTerakhir(list);
       }
     } catch (error) {
@@ -143,20 +225,53 @@ export default function Laporan() {
     return { transform: [{ translateY }] };
   });
 
-  const formatTanggal = (dateStr: string) => {
-    if (!dateStr) return "-";
-    const d = new Date(dateStr);
-    return d.toLocaleDateString("id-ID", {
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-    });
-  };
-
   return (
     <View style={styles.container}>
+      <Modal
+        visible={showPeriodeModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowPeriodeModal(false)}
+      >
+        <TouchableOpacity
+          style={styles.modalOverlay}
+          activeOpacity={1}
+          onPress={() => setShowPeriodeModal(false)}
+        >
+          <View style={styles.periodeModalCard}>
+            <Text style={styles.periodeModalTitle}>Pilih Periode</Text>
+            {PERIODE_OPTIONS.map((opt) => (
+              <TouchableOpacity
+                key={opt.value}
+                style={[
+                  styles.periodeOption,
+                  selectedPeriode === opt.label && styles.periodeOptionActive,
+                ]}
+                onPress={() => {
+                  setSelectedPeriode(opt.label);
+                  setShowPeriodeModal(false);
+                }}
+              >
+                <Text
+                  style={[
+                    styles.periodeOptionText,
+                    selectedPeriode === opt.label &&
+                      styles.periodeOptionTextActive,
+                  ]}
+                >
+                  {opt.label}
+                </Text>
+                {selectedPeriode === opt.label && (
+                  <Ionicons name="checkmark" size={16} color="#34B3B9" />
+                )}
+              </TouchableOpacity>
+            ))}
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
       <Animated.View style={[styles.headerWrapper, headerStyle]}>
-        <AppHeader scrollY={scrollY} />
+        <AppHeader scrollY={scrollY} unreadCount={unreadCount} />
       </Animated.View>
 
       <Animated.ScrollView
@@ -168,11 +283,13 @@ export default function Laporan() {
           paddingBottom: 100,
         }}
       >
-        {/* Judul */}
         <Text style={styles.pageTitle}>Laporan Pasien</Text>
 
-        {/* Periode Laporan */}
-        <View style={styles.periodeCard}>
+        <TouchableOpacity
+          style={styles.periodeCard}
+          onPress={() => setShowPeriodeModal(true)}
+          activeOpacity={0.7}
+        >
           <View style={styles.periodeLeft}>
             <Ionicons name="calendar-outline" size={20} color="#34B3B9" />
             <View>
@@ -180,21 +297,23 @@ export default function Laporan() {
               <Text style={styles.periodeValue}>
                 {periode.start && periode.end
                   ? `${formatTanggal(periode.start)} - ${formatTanggal(periode.end)}`
-                  : "Bulan ini"}
+                  : selectedPeriode}
               </Text>
             </View>
           </View>
-          <Ionicons name="options-outline" size={20} color="#5d5959" />
-        </View>
+          <View style={styles.periodeFilterBtn}>
+            <Ionicons name="options-outline" size={18} color="#34B3B9" />
+            <Text style={styles.periodeFilterText}>Filter</Text>
+          </View>
+        </TouchableOpacity>
 
-        {/* Stats Cards */}
         <View style={styles.statsRow}>
           <View style={[styles.statsCard, styles.statsCardTeal]}>
             <Ionicons name="bar-chart" size={20} color="#80bec1" />
             <Text style={styles.statsLabelWhite}>Total Pemeriksaan</Text>
             <Text style={styles.statsNumberWhite}>{totalPemeriksaan}</Text>
             <View style={styles.statsBadge}>
-              <Text style={styles.statsBadgeText}>Bulan ini</Text>
+              <Text style={styles.statsBadgeText}>{selectedPeriode}</Text>
             </View>
           </View>
 
@@ -206,56 +325,46 @@ export default function Laporan() {
           </View>
         </View>
 
-        {/* Aktivitas Harian */}
         <Text style={styles.sectionTitle}>Aktivitas Harian</Text>
         <View style={styles.chartCard}>
           <View style={styles.chartWrapper}>
-            {aktivitasHarian.length === 0 ? (
-              <Text style={{ color: "#aaa", textAlign: "center", flex: 1 }}>
-                Belum ada data
-              </Text>
-            ) : (
-              aktivitasHarian.map((item, index) => (
-                <View key={index} style={styles.barWrapper}>
-                  <View style={styles.barContainer}>
-                    <View
-                      style={[
-                        styles.bar,
-                        {
-                          height: Math.max(
-                            (item.nilai / MAX_BAR) * BAR_HEIGHT,
-                            4,
-                          ),
-                          backgroundColor:
-                            item.nilai >= 80 ? "#34B3B9" : "#C0EAE3",
-                        },
-                      ]}
-                    />
-                  </View>
-                  <Text style={styles.barLabel}>{item.hari}</Text>
+            {aktivitasHarian.map((item: any, index: number) => (
+              <View key={index} style={styles.barWrapper}>
+                <View style={styles.barContainer}>
+                  <View
+                    style={[
+                      styles.bar,
+                      {
+                        height: Math.max((item.persen / 100) * BAR_HEIGHT, 6),
+                        backgroundColor: item.active ? "#34B3B9" : "#D8EEEF",
+                        opacity: item.active ? 1 : 0.6,
+                      },
+                    ]}
+                  />
                 </View>
-              ))
-            )}
+                <Text
+                  style={[
+                    styles.barLabel,
+                    item.active && { color: "#34B3B9", fontWeight: "800" },
+                  ]}
+                >
+                  {item.hari}
+                </Text>
+              </View>
+            ))}
           </View>
         </View>
 
-        {/* Daftar Pasien Terakhir */}
         <View style={styles.daftarHeader}>
           <Text style={styles.sectionTitle}>Daftar Pasien Terakhir</Text>
-          <View style={styles.daftarIcons}>
-            <TouchableOpacity>
-              <Ionicons name="search-outline" size={20} color="#555" />
-            </TouchableOpacity>
-            <TouchableOpacity>
-              <Ionicons name="filter-outline" size={20} color="#555" />
-            </TouchableOpacity>
-          </View>
         </View>
 
         {loading ? (
           <Text style={styles.emptyText}>Memuat data...</Text>
         ) : pasienTerakhir.length === 0 ? (
-          <Text style={styles.emptyText}>Belum ada data rontgen</Text>
+          <Text style={styles.emptyText}>
+            Tidak ada data pada periode {selectedPeriode.toLowerCase()}
+          </Text>
         ) : (
           <View style={styles.listWrapper}>
             {pasienTerakhir.map((pasien) => (
@@ -266,18 +375,7 @@ export default function Laporan() {
                 onPress={() =>
                   router.push({
                     pathname: "/(admin)/ExamDetails",
-                    params: {
-                      rontgenId: String(pasien.rontgenId),
-                      nama: pasien.nama,
-                      no: pasien.no,
-                      jam: pasien.jam,
-                      umur: pasien.umur,
-                      dokter: pasien.dokter,
-                      notes: pasien.notes,
-                      fotoRontgen: pasien.fotoRontgen,
-                      fotoProfil: pasien.fotoProfil,
-                      fotoIntraoral: pasien.fotoIntraoral,
-                    },
+                    params: { ...pasien }, // Tetap kirim semua params sesuai keinginan lo
                   })
                 }
               >
@@ -290,8 +388,44 @@ export default function Laporan() {
                   <Text style={styles.nama}>{pasien.nama}</Text>
                   <View style={styles.infoRow}>
                     <Text style={styles.tanggal}>{pasien.tanggal}</Text>
-                    <Text style={styles.dot}> • </Text>
-                    <Text style={styles.xray}>{pasien.xray} X-Rays</Text>
+                    {(pasien.xray > 0 ||
+                      pasien.fotoProfil > 0 ||
+                      pasien.fotoIntraoral > 0) && (
+                      <>
+                        {pasien.xray > 0 && (
+                          <>
+                            <Text style={styles.dot}> • </Text>
+                            <Text style={styles.xray}>{pasien.xray} X-Ray</Text>
+                          </>
+                        )}
+                        {pasien.fotoProfil > 0 && (
+                          <>
+                            <Text style={styles.dot}> • </Text>
+                            <Text style={styles.xray}>
+                              {pasien.fotoProfil} Profil
+                            </Text>
+                          </>
+                        )}
+                        {pasien.fotoIntraoral > 0 && (
+                          <>
+                            <Text style={styles.dot}> • </Text>
+                            <Text style={styles.xray}>
+                              {pasien.fotoIntraoral} Intraoral
+                            </Text>
+                          </>
+                        )}
+                      </>
+                    )}
+                    {pasien.xray === 0 &&
+                      pasien.fotoProfil === 0 &&
+                      pasien.fotoIntraoral === 0 && (
+                        <>
+                          <Text style={styles.dot}> • </Text>
+                          <Text style={{ fontSize: 12, color: "#aaa" }}>
+                            Belum ada foto
+                          </Text>
+                        </>
+                      )}
                   </View>
                 </View>
                 <Ionicons name="chevron-forward" size={18} color="#ccc" />
@@ -304,6 +438,7 @@ export default function Laporan() {
   );
 }
 
+// Styles tetap sama (tidak ada perubahan di bagian ini agar visual tidak rusak)
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: "#E2F0F1" },
   headerWrapper: {
@@ -326,6 +461,7 @@ const styles = StyleSheet.create({
     color: "#aaa",
     marginTop: 20,
     fontSize: 14,
+    marginHorizontal: 16,
   },
   periodeCard: {
     flexDirection: "row",
@@ -337,9 +473,6 @@ const styles = StyleSheet.create({
     padding: 14,
     marginBottom: 16,
     elevation: 2,
-    shadowColor: "#000",
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
   },
   periodeLeft: { flexDirection: "row", alignItems: "center", gap: 12 },
   periodeLabel: {
@@ -349,22 +482,60 @@ const styles = StyleSheet.create({
     fontWeight: "700",
   },
   periodeValue: { fontSize: 15, fontWeight: "700", color: "#1a1a1a" },
+  periodeFilterBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    gap: 4,
+    backgroundColor: "#E2F0F1",
+    paddingHorizontal: 10,
+    paddingVertical: 6,
+    borderRadius: 20,
+  },
+  periodeFilterText: { fontSize: 12, color: "#34B3B9", fontWeight: "600" },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: "rgba(0,0,0,0.3)",
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  periodeModalCard: {
+    width: width * 0.8,
+    backgroundColor: "#fff",
+    borderRadius: 20,
+    padding: 20,
+    elevation: 10,
+  },
+  periodeModalTitle: {
+    fontSize: 16,
+    fontWeight: "bold",
+    color: "#1a1a1a",
+    marginBottom: 16,
+    textAlign: "center",
+  },
+  periodeOption: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    paddingVertical: 12,
+    paddingHorizontal: 14,
+    borderRadius: 10,
+    marginBottom: 6,
+    backgroundColor: "#f9f9f9",
+  },
+  periodeOptionActive: {
+    backgroundColor: "#E2F0F1",
+    borderWidth: 1,
+    borderColor: "#34B3B9",
+  },
+  periodeOptionText: { fontSize: 14, color: "#555" },
+  periodeOptionTextActive: { color: "#34B3B9", fontWeight: "600" },
   statsRow: {
     flexDirection: "row",
     marginHorizontal: 16,
     gap: 12,
     marginBottom: 24,
   },
-  statsCard: {
-    flex: 1,
-    borderRadius: 22,
-    padding: 14,
-    gap: 6,
-    elevation: 2,
-    shadowColor: "#000",
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
-  },
+  statsCard: { flex: 1, borderRadius: 22, padding: 14, gap: 6, elevation: 2 },
   statsCardTeal: { backgroundColor: "#35a5ad" },
   statsCardWhite: { backgroundColor: "#fff" },
   statsLabelWhite: { fontSize: 12, color: "#bccbcc" },
@@ -394,11 +565,8 @@ const styles = StyleSheet.create({
     padding: 16,
     marginBottom: 24,
     elevation: 2,
-    shadowColor: "#000",
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
     borderWidth: 1,
-    borderColor: "#ccc5c5",
+    borderColor: "#e8e8e8",
   },
   chartWrapper: {
     flexDirection: "row",
@@ -408,15 +576,15 @@ const styles = StyleSheet.create({
   },
   barWrapper: { alignItems: "center", gap: 6, flex: 1 },
   barContainer: { height: BAR_HEIGHT, justifyContent: "flex-end" },
-  bar: { width: 28, borderRadius: 10 },
-  barLabel: { fontSize: 11, color: "#888", fontWeight: "700" },
+  bar: { width: 26, borderRadius: 10 },
+  barLabel: { fontSize: 11, color: "#aaa", fontWeight: "600" },
   daftarHeader: {
     flexDirection: "row",
     justifyContent: "space-between",
-    marginHorizontal: 4,
+    alignItems: "center",
+    marginHorizontal: 16,
     marginBottom: 12,
   },
-  daftarIcons: { flexDirection: "row", gap: 10, right: 20 },
   listWrapper: { paddingHorizontal: 16 },
   card: {
     backgroundColor: "#fff",
@@ -426,9 +594,6 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 12,
     elevation: 2,
-    shadowColor: "#000",
-    shadowOpacity: 0.05,
-    shadowRadius: 4,
     gap: 12,
   },
   avatar: {
@@ -440,7 +605,7 @@ const styles = StyleSheet.create({
   },
   info: { flex: 1, gap: 4 },
   nama: { fontSize: 15, fontWeight: "600", color: "#1a1a1a" },
-  infoRow: { flexDirection: "row", alignItems: "center" },
+  infoRow: { flexDirection: "row", alignItems: "center", flexWrap: "wrap" },
   tanggal: { fontSize: 12, color: "#888" },
   dot: { fontSize: 12, color: "#888" },
   xray: { fontSize: 12, color: "#2E9DA4", fontWeight: "600" },

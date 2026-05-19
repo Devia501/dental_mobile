@@ -10,11 +10,12 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 
 interface Props {
   scrollY: SharedValue<number>;
+  unreadCount?: number;
 }
 
 const PARALLAX_DISTANCE = 40;
 
-export default function AppHeader({ scrollY }: Props) {
+export default function AppHeader({ scrollY, unreadCount = 0 }: Props) {
   const insets = useSafeAreaInsets();
 
   const containerStyle = useAnimatedStyle(() => {
@@ -71,9 +72,13 @@ export default function AppHeader({ scrollY }: Props) {
         activeOpacity={0.75}
       >
         <Ionicons name="notifications" size={22} color="#fff" />
-        <View style={styles.badge}>
-          <Animated.Text style={styles.badgeText}>2</Animated.Text>
-        </View>
+        {unreadCount > 0 && ( 
+          <View style={styles.badge}>
+            <Animated.Text style={styles.badgeText}>
+              {unreadCount}
+            </Animated.Text>
+          </View>
+        )}
       </TouchableOpacity>
     </Animated.View>
   );

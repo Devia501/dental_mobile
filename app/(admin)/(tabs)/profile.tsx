@@ -18,6 +18,7 @@ import {
 import { useSharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import AppHeader from "../../../components/shared/AppHeader";
+import { useUnreadNotif } from "../../../hooks/useUnreadNotif";
 import {
   changeEmail,
   changePassword,
@@ -30,6 +31,7 @@ const { width } = Dimensions.get("window");
 export default function Profile() {
   const insets = useSafeAreaInsets();
   const scrollY = useSharedValue(0);
+  const unreadCount = useUnreadNotif();
 
   const [userData, setUserData] = useState<{
     name: string;
@@ -240,7 +242,7 @@ export default function Profile() {
         </TouchableOpacity>
       </Modal>
 
-      <AppHeader scrollY={scrollY} />
+      <AppHeader scrollY={scrollY} unreadCount={unreadCount} />
       <View style={styles.topSection} />
 
       <View style={styles.avatarContainer} pointerEvents="box-none">

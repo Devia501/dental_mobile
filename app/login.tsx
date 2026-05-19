@@ -1,6 +1,7 @@
 import { Ionicons } from "@expo/vector-icons";
 import { LinearGradient } from "expo-linear-gradient";
 import { router } from "expo-router";
+import * as SecureStore from "expo-secure-store";
 import { useState } from "react";
 import {
   Dimensions,
@@ -31,7 +32,7 @@ export default function Login() {
 
     setLoading(true);
     try {
-      const data = await login(email, password);
+      const data = await login(email.trim(), password);
 
       if (data.error) {
         alert(data.error);
@@ -39,6 +40,14 @@ export default function Login() {
       }
 
       if (data.success && data.data?.token) {
+        await SecureStore.setItemAsync("token", data.data.token);
+        if (data.data.user) {
+          await SecureStore.setItemAsync(
+            "user",
+            JSON.stringify(data.data.user),
+          );
+        }
+
         router.replace("/(admin)/(tabs)/beranda");
       } else {
         alert(data.message || "Email atau password salah!");
@@ -155,6 +164,7 @@ export default function Login() {
   );
 }
 
+// STYLES TETEP SAMA PERSIS
 const styles = StyleSheet.create({
   container: {
     flex: 1,

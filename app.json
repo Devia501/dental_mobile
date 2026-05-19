@@ -21,7 +21,10 @@
         "WRITE_EXTERNAL_STORAGE",
         "ACCESS_MEDIA_LOCATION"
       ],
-      "blockedPermissions": ["RECORD_AUDIO", "MODIFY_AUDIO_SETTINGS"]
+      "blockedPermissions": [
+        "RECORD_AUDIO",
+        "MODIFY_AUDIO_SETTINGS"
+      ]
     },
     "plugins": [
       "expo-router",
@@ -42,7 +45,8 @@
           "savePhotosPermission": "Allow dental to save photos.",
           "isAccessMediaLocationEnabled": true
         }
-      ]
+      ],
+      "@react-native-community/datetimepicker"
     ]
   }
 }

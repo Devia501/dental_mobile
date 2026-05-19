@@ -1,7 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
 import { router } from "expo-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Image, StyleSheet, Text, TouchableOpacity, View } from "react-native";
+import {
+  createRontgen,
+  getRontgenByPatient,
+  updateTargetFotoRontgen,
+} from "../../services/pasienService";
 import StatusBerhasil from "./Statusberhasil";
 import UbahStatusPasien from "./Ubahstatuspasien";
 
@@ -24,29 +29,30 @@ const getStatusIcon = (status: string) => {
   }
 };
 
-// Map status dari API ke label UI
-const mapStatus = (apiStatus: string) => {
-  switch (apiStatus) {
-    case "menunggu":
-      return { label: "Menunggu", warna: "#7a6200b2", bg: "#ffd70031" };
-    case "di_dalam_ruangan":
-      return { label: "Dalam Ruangan", warna: "#1010a6a2", bg: "#5a88e44e" };
-    case "perlu_upload_foto":
-      return { label: "Perlu Rontgen", warna: "#851414b2", bg: "#e12c2c31" };
-    case "selesai":
-      return { label: "Selesai", warna: "#134a4d9b", bg: "#C0EAE3" };
-    default:
-      return { label: "Menunggu", warna: "#7a6200b2", bg: "#ffd70031" };
-  }
+const apiStatusToUI: Record<
+  string,
+  { label: string; warna: string; bg: string }
+> = {
+  menunggu: { label: "Menunggu", warna: "#7a6200b2", bg: "#ffd70031" },
+  di_dalam_ruangan: {
+    label: "Dalam Ruangan",
+    warna: "#1010a6a2",
+    bg: "#5a88e44e",
+  },
+  perlu_upload_foto: {
+    label: "Perlu Rontgen",
+    warna: "#851414b2",
+    bg: "#e12c2c31",
+  },
+  selesai: { label: "Selesai", warna: "#134a4d9b", bg: "#C0EAE3" },
 };
 
-const statusMap: Record<string, { label: string; warna: string; bg: string }> =
-  {
-    menunggu: { label: "Menunggu", warna: "#7a6200b2", bg: "#ffd70031" },
-    ruangan: { label: "Dalam Ruangan", warna: "#1010a6a2", bg: "#5a88e44e" },
-    rontgen: { label: "Perlu Rontgen", warna: "#851414b2", bg: "#e12c2c31" },
-    selesai: { label: "Selesai", warna: "#134a4d9b", bg: "#C0EAE3" },
-  };
+const modalKeyToApiStatus: Record<string, string> = {
+  menunggu: "menunggu",
+  ruangan: "di_dalam_ruangan",
+  rontgen: "perlu_upload_foto",
+  selesai: "selesai",
+};
 
 type PasienItem = {
   id: number;
@@ -58,13 +64,16 @@ type PasienItem = {
   statusWarna: string;
   statusBg: string;
   rontgenId?: number;
+  patientId?: number;
+  doctorId?: number;
 };
 
 interface Props {
   pasienList?: PasienItem[];
+  onRefresh?: () => void;
 }
 
-export default function PasienHadirList({ pasienList = [] }: Props) {
+export default function PasienHadirList({ pasienList = [], onRefresh }: Props) {
   const [data, setData] = useState<PasienItem[]>(pasienList);
   const [selectedPasien, setSelectedPasien] = useState<PasienItem | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
@@ -72,68 +81,88 @@ export default function PasienHadirList({ pasienList = [] }: Props) {
   const [successSubtitle, setSuccessSubtitle] = useState(
     "Perubahan telah tersimpan ke sistem",
   );
-  const [pendingNav, setPendingNav] = useState<(() => void) | null>(null);
 
-  // Update data saat props berubah
-  useState(() => {
+  useEffect(() => {
     setData(pasienList);
-  });
+  }, [pasienList]);
 
   const handlePress = (pasien: PasienItem) => {
     setSelectedPasien(pasien);
     setModalVisible(true);
   };
 
-  const handleSave = (
+  const handleSave = async (
     pasienId: number,
     statusKey: string,
     fotoKeys?: string[],
-  ) => {
-    const mapped = statusMap[statusKey];
+    tanpaFoto?: boolean,
+  ): Promise<{ rontgenId: number; doctorId?: number } | null> => {
+    // ← tambah return type
+    const apiStatus = modalKeyToApiStatus[statusKey];
+    const mapped = apiStatusToUI[apiStatus];
     const pasien = data.find((p) => p.id === pasienId);
 
-    setData((prev) =>
-      prev.map((p) =>
-        p.id === pasienId
-          ? {
-              ...p,
-              status: mapped.label,
-              statusWarna: mapped.warna,
-              statusBg: mapped.bg,
-            }
-          : p,
-      ),
-    );
+    try {
+      let rontgenId = pasien?.rontgenId;
 
-    if (statusKey === "rontgen" && pasien) {
-      setSuccessSubtitle("Redirect to upload foto...");
-      setPendingNav(
-        () => () =>
-          router.push({
-            pathname: "/(admin)/Uploadfotopasien ",
-            params: {
-              nama: pasien.nama,
-              no: pasien.no,
-              jam: pasien.jam,
-              umur: pasien.umur,
-              fotoKeys: (fotoKeys || []).join(","),
-            },
-          }),
+      if (!rontgenId && pasien?.patientId) {
+        const rontgenRes = await getRontgenByPatient(pasien.patientId);
+        if (rontgenRes.success && rontgenRes.data?.rontgens?.length > 0) {
+          rontgenId = rontgenRes.data.rontgens[0].id;
+        }
+      }
+
+      if (!rontgenId) {
+        const res = await createRontgen(
+          pasien?.patientId || pasienId,
+          pasien?.doctorId || 1,
+          apiStatus,
+          statusKey === "rontgen" ? fotoKeys : undefined,
+        );
+        if (res.success) {
+          rontgenId = res.data?.rontgen?.id ?? res.data?.id;
+        }
+      } else {
+        await updateTargetFotoRontgen(
+          rontgenId,
+          apiStatus,
+          statusKey === "rontgen" ? fotoKeys : undefined,
+        );
+      }
+
+      // Update badge
+      setData((prev) =>
+        prev.map((p) =>
+          p.id === pasienId
+            ? {
+                ...p,
+                status: mapped.label,
+                statusWarna: mapped.warna,
+                statusBg: mapped.bg,
+                rontgenId,
+              }
+            : p,
+        ),
       );
-    } else {
-      setSuccessSubtitle("Perubahan telah tersimpan ke sistem");
-      setPendingNav(() => () => router.push("/(admin)/(tabs)/pasien"));
-    }
 
-    setShowSuccess(true);
+      // Return rontgenId agar UbahStatusPasien bisa navigasi
+      if ((statusKey === "rontgen" || statusKey === "selesai") && rontgenId) {
+        return { rontgenId, doctorId: pasien?.doctorId };
+      }
+
+      // Untuk menunggu/ruangan — tampilkan sukses biasa
+      setSuccessSubtitle("Perubahan telah tersimpan ke sistem");
+      setShowSuccess(true);
+      return null;
+    } catch (error) {
+      console.log("Error save status:", error);
+      return null;
+    }
   };
 
   const handleSuccessDone = () => {
     setShowSuccess(false);
-    if (pendingNav) {
-      pendingNav();
-      setPendingNav(null);
-    }
+    if (onRefresh) onRefresh();
   };
 
   return (

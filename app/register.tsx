@@ -27,27 +27,41 @@ export default function Register() {
   const [name, setName] = useState("");
 
   const handleRegister = async () => {
+    // Logika WAJIB centang: Tombol ditolak jika belum setuju
     if (!agree) {
-      alert("Harap setujui Term & Condition!");
+      alert("Harap centang dan setujui Term & Condition untuk melanjutkan.");
       return;
     }
+
+    // Validasi input FE: Trimming spasi agar data bersih
+    const cleanName = name.trim();
+    const cleanEmail = email.trim();
+
+    if (!cleanName || !cleanEmail || !password) {
+      alert("Semua field wajib diisi!");
+      return;
+    }
+
     if (password !== confirmPassword) {
       alert("Password tidak sama!");
-      return;
-    }
-    if (!name || !email || !password) {
-      alert("Semua field wajib diisi!");
       return;
     }
 
     setLoading(true);
     try {
-      const data = await register(name, email, password, confirmPassword);
+      // Memanggil service register dengan data yang sudah dibersihkan
+      const data = await register(
+        cleanName,
+        cleanEmail,
+        password,
+        confirmPassword,
+      );
 
       if (data.success) {
         alert("Registrasi berhasil! Silakan login.");
         router.replace("/login");
       } else {
+        // Menangani pesan error validasi spesifik dari Laravel
         if (data.errors) {
           const firstError = Object.values(data.errors)[0] as string[];
           alert(firstError[0]);
@@ -56,9 +70,10 @@ export default function Register() {
         }
       }
     } catch (error) {
-      alert("Gagal konek ke server!");
+      alert("Gagal konek ke server! Pastikan backend sudah berjalan.");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   };
 
   return (

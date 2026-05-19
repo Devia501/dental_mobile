@@ -10,8 +10,12 @@ export default function AdminLayout() {
       <Stack screenOptions={{ headerShown: false }}>
         {/* Semua tab dalam satu screen */}
         <Stack.Screen name="(tabs)" />
+
         {/* Halaman tanpa tab bar */}
-        <Stack.Screen name="Uploadfotopasien" />
+        <Stack.Screen name="Uploadfotopasien " />
+
+        {/* Tambahkan halaman baru di sini sesuai nama filenya */}
+        <Stack.Screen name="Lembarpemeriksaangigi" />
       </Stack>
     </>
   );
