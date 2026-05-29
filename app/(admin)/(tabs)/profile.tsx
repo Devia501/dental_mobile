@@ -248,14 +248,18 @@ export default function Profile() {
       <View style={styles.avatarContainer} pointerEvents="box-none">
         <View style={styles.avatarWrapper}>
           <View style={styles.avatar}>
-            {userData?.avatar ? (
+            {userData?.avatar && userData.avatar.length > 0 ? (
               <Image
-                // Tambahkan ?timestamp agar URL selalu dianggap baru oleh React Native
                 source={{ uri: `${userData.avatar}?t=${new Date().getTime()}` }}
-                style={{ width: 110, height: 110, borderRadius: 60 }}
+                style={{ width: 110, height: 110, borderRadius: 55 }}
+                onError={() => {
+                  setUserData((prev) =>
+                    prev ? { ...prev, avatar: undefined } : prev,
+                  );
+                }}
               />
             ) : (
-              <Ionicons name="person" size={60} color="#ffffff" />
+              <Ionicons name="person" size={70} color="rgba(255,255,255,0.9)" />
             )}
           </View>
           <TouchableOpacity style={styles.editBtn} onPress={handlePickImage}>
@@ -325,7 +329,7 @@ const styles = StyleSheet.create({
     left: 0,
     right: 0,
     alignItems: "center",
-    zIndex: 10,
+    zIndex: 20,
     bottom: 0,
     justifyContent: "flex-end",
   },
@@ -333,13 +337,12 @@ const styles = StyleSheet.create({
   avatar: {
     width: 110,
     height: 110,
-    borderRadius: 60,
-    backgroundColor: "#E8E8E8",
+    borderRadius: 55,
+    backgroundColor: "#E2F0F1",
     justifyContent: "center",
     alignItems: "center",
     borderWidth: 4,
-    borderColor: "#d3d1d1",
-    overflow: "hidden",
+    borderColor: "#ffffff",
   },
   editBtn: {
     position: "absolute",
@@ -360,6 +363,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 36,
     borderTopRightRadius: 36,
     paddingHorizontal: 28,
+    zIndex: 1,
   },
   nama: {
     fontSize: 18,
@@ -459,4 +463,12 @@ const styles = StyleSheet.create({
     elevation: 3,
   },
   submitBtnText: { color: "#fff", fontSize: 16, fontWeight: "bold" },
+  avatarIconWrapper: {
+    width: 110,
+    height: 110,
+    borderRadius: 55,
+    justifyContent: "center",
+    alignItems: "center",
+    overflow: "hidden",
+  },
 });

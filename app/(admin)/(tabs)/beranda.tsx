@@ -133,14 +133,18 @@ export default function Beranda() {
         setPasienList(list);
 
         const selesai = list.filter((p) => p.status === "Selesai").length;
+
         const diRuangan = list.filter(
           (p) => p.status === "Dalam Ruangan",
         ).length;
+
         const hadir = list.filter((p) => p.status === "Menunggu").length;
+
+        const rontgen = list.filter((p) => p.status === "Perlu Rontgen").length;
 
         setStats({
           hadir,
-          rontgen: totalRontgen,
+          rontgen,
           selesai,
           diRuangan,
         });

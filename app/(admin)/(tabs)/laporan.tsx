@@ -107,6 +107,7 @@ export default function Laporan() {
   const [selectedPeriode, setSelectedPeriode] = useState("Bulan Ini");
   const [showPeriodeModal, setShowPeriodeModal] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [selectedBar, setSelectedBar] = useState<number | null>(null);
 
   // Perbaikan: Gunakan useFocusEffect agar data selalu fresh saat tab dibuka
   useFocusEffect(
@@ -328,31 +329,86 @@ export default function Laporan() {
         <Text style={styles.sectionTitle}>Aktivitas Harian</Text>
         <View style={styles.chartCard}>
           <View style={styles.chartWrapper}>
-            {aktivitasHarian.map((item: any, index: number) => (
-              <View key={index} style={styles.barWrapper}>
-                <View style={styles.barContainer}>
-                  <View
-                    style={[
-                      styles.bar,
-                      {
-                        height: Math.max((item.persen / 100) * BAR_HEIGHT, 6),
-                        backgroundColor: item.active ? "#34B3B9" : "#D8EEEF",
-                        opacity: item.active ? 1 : 0.6,
-                      },
-                    ]}
-                  />
-                </View>
-                <Text
-                  style={[
-                    styles.barLabel,
-                    item.active && { color: "#34B3B9", fontWeight: "800" },
-                  ]}
+            {aktivitasHarian.map((item: any, index: number) => {
+              const isSelected = selectedBar === index;
+              return (
+                <TouchableOpacity
+                  key={index}
+                  style={styles.barWrapper}
+                  activeOpacity={0.7}
+                  onPress={() => setSelectedBar(isSelected ? null : index)}
                 >
-                  {item.hari}
-                </Text>
-              </View>
-            ))}
+                  <View style={styles.barContainer}>
+                    {isSelected && (
+                      <View style={styles.barTooltip}>
+                        <Text style={styles.barTooltipText}>{item.nilai}</Text>
+                      </View>
+                    )}
+                    <View
+                      style={[
+                        styles.bar,
+                        {
+                          height: Math.max((item.persen / 100) * BAR_HEIGHT, 6),
+                          backgroundColor: isSelected
+                            ? "#1a8a91"
+                            : item.active
+                              ? "#34B3B9"
+                              : "#D8EEEF",
+                          opacity: item.active || isSelected ? 1 : 0.6,
+                        },
+                      ]}
+                    />
+                  </View>
+                  <Text
+                    style={[
+                      styles.barLabel,
+                      item.active && { color: "#34B3B9", fontWeight: "800" },
+                      isSelected && { color: "#1a8a91", fontWeight: "800" },
+                    ]}
+                  >
+                    {item.hari}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
           </View>
+
+          {/* Ringkasan hari terbanyak */}
+          {(() => {
+            const maxItem = aktivitasHarian.reduce(
+              (best, cur) => (cur.nilai > best.nilai ? cur : best),
+              { hari: "-", nilai: 0 },
+            );
+            const totalAktif = aktivitasHarian.reduce(
+              (sum, h) => sum + h.nilai,
+              0,
+            );
+            if (totalAktif === 0) return null;
+            return (
+              <View style={styles.chartSummary}>
+                <View style={styles.chartSummaryItem}>
+                  <Text style={styles.chartSummaryLabel}>Hari Tersibuk</Text>
+                  <Text style={styles.chartSummaryValue}>{maxItem.hari}</Text>
+                </View>
+                <View style={styles.chartSummaryDivider} />
+                <View style={styles.chartSummaryItem}>
+                  <Text style={styles.chartSummaryLabel}>Pasien Terbanyak</Text>
+                  <Text style={styles.chartSummaryValue}>
+                    {maxItem.nilai} pasien
+                  </Text>
+                </View>
+                <View style={styles.chartSummaryDivider} />
+                <View style={styles.chartSummaryItem}>
+                  <Text style={styles.chartSummaryLabel}>
+                    Total {selectedPeriode}
+                  </Text>
+                  <Text style={styles.chartSummaryValue}>
+                    {totalAktif} pasien
+                  </Text>
+                </View>
+              </View>
+            );
+          })()}
         </View>
 
         <View style={styles.daftarHeader}>
@@ -574,8 +630,13 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
     height: BAR_HEIGHT + 24,
   },
-  barWrapper: { alignItems: "center", gap: 6, flex: 1 },
-  barContainer: { height: BAR_HEIGHT, justifyContent: "flex-end" },
+  barWrapper: { alignItems: "center", gap: 6, flex: 1, overflow: "visible" },
+  barContainer: {
+    height: BAR_HEIGHT,
+    justifyContent: "flex-end",
+    overflow: "visible",
+    alignItems: "center",
+  },
   bar: { width: 26, borderRadius: 10 },
   barLabel: { fontSize: 11, color: "#aaa", fontWeight: "600" },
   daftarHeader: {
@@ -609,4 +670,39 @@ const styles = StyleSheet.create({
   tanggal: { fontSize: 12, color: "#888" },
   dot: { fontSize: 12, color: "#888" },
   xray: { fontSize: 12, color: "#2E9DA4", fontWeight: "600" },
+  barTooltip: {
+    position: "absolute",
+    top: -28,
+    alignSelf: "center",
+    backgroundColor: "#1a8a91",
+    borderRadius: 8,
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    zIndex: 10,
+    minWidth: 32,
+    alignItems: "center",
+  },
+  barTooltipText: {
+    color: "#fff",
+    fontSize: 12,
+    fontWeight: "700",
+  },
+  chartSummary: {
+    flexDirection: "row",
+    marginTop: 16,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: "#f0f0f0",
+    justifyContent: "space-around",
+    alignItems: "center",
+  },
+  chartSummaryItem: { alignItems: "center", flex: 1 },
+  chartSummaryLabel: {
+    fontSize: 9,
+    color: "#aaa",
+    marginBottom: 4,
+    fontWeight: "600",
+  },
+  chartSummaryValue: { fontSize: 14, fontWeight: "700", color: "#1a1a1a" },
+  chartSummaryDivider: { width: 1, height: 32, backgroundColor: "#f0f0f0" },
 });

@@ -1,11 +1,12 @@
 import { Ionicons } from "@expo/vector-icons";
-import { router, useFocusEffect } from "expo-router";
+import { useFocusEffect } from "expo-router";
 import { useCallback, useState } from "react";
 import {
   Image,
   ScrollView,
   StyleSheet,
   Text,
+  TextInput,
   TouchableOpacity,
   View,
 } from "react-native";
@@ -28,6 +29,7 @@ import {
 
 const HEADER_HEIGHT = 100;
 const PARALLAX_DISTANCE = 1;
+const PASIEN_LIMIT = 5;
 
 const statusIcon: Record<string, any> = {
   "Dalam Ruangan": require("../../../assets/icons/icon_status_ruangan.png"),
@@ -107,10 +109,11 @@ export default function Pasien() {
   const [selectedPasien, setSelectedPasien] = useState<Pasien | null>(null);
   const [modalVisible, setModalVisible] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const [search, setSearch] = useState("");
   const [successSubtitle, setSuccessSubtitle] = useState(
     "Perubahan telah tersimpan ke sistem",
   );
-  const [pendingNav, setPendingNav] = useState<(() => void) | null>(null);
   const scrollY = useSharedValue(0);
   const unreadCount = useUnreadNotif();
 
@@ -186,15 +189,22 @@ export default function Pasien() {
     ],
   }));
 
-  const filtered = data.filter((p) =>
-    filterMap[activeFilter].includes(p.status),
-  );
+  const filtered = data
+    .filter((p) => filterMap[activeFilter].includes(p.status))
+    .filter(
+      (p) =>
+        search === "" || p.nama.toLowerCase().includes(search.toLowerCase()),
+    );
+
+  const displayedPasien = showAll ? filtered : filtered.slice(0, PASIEN_LIMIT);
+  const hasMore = filtered.length > PASIEN_LIMIT;
 
   const handleSave = async (
     pasienId: number,
     statusKey: string,
     fotoKeys?: string[],
-  ) => {
+    _tanpaFoto?: boolean,
+  ): Promise<{ rontgenId: number; doctorId?: number } | null> => {
     const apiStatus = modalKeyToApiStatus[statusKey];
     const mapped = apiStatusToUI[apiStatus];
     const pasien = data.find((p) => p.id === pasienId);
@@ -233,41 +243,22 @@ export default function Pasien() {
         ),
       );
 
-      if (statusKey === "rontgen" && pasien) {
-        setSuccessSubtitle("Redirect to upload foto...");
-        setPendingNav(
-          () => () =>
-            router.push({
-              pathname: "/(admin)/Uploadfotopasien ",
-              params: {
-                nama: pasien.nama,
-                no: pasien.no,
-                jam: pasien.jam,
-                umur: pasien.umur,
-                fotoKeys: (fotoKeys || []).join(","),
-                rontgenId: String(rontgenId || ""),
-                patientId: String(pasien.patientId || ""),
-                doctorId: String(pasien.doctorId || ""),
-              },
-            }),
-        );
-      } else {
-        setSuccessSubtitle("Perubahan telah tersimpan ke sistem");
-        setPendingNav(null);
-      }
-
       setShowSuccess(true);
+      setSuccessSubtitle("Perubahan telah tersimpan ke sistem");
+
+      // Return rontgenId & doctorId → UbahStatusPasien yang handle navigasi
+      if (rontgenId) {
+        return { rontgenId, doctorId: pasien?.doctorId };
+      }
+      return null;
     } catch (error) {
       console.log("Error save status:", error);
+      return null;
     }
   };
 
   const handleSuccessDone = () => {
     setShowSuccess(false);
-    if (pendingNav) {
-      pendingNav();
-      setPendingNav(null);
-    }
   };
 
   return (
@@ -313,93 +304,200 @@ export default function Pasien() {
           ))}
         </ScrollView>
 
-        {data.length === 0 ? (
-          <Text style={styles.emptyText}>Tidak ada pasien hadir hari ini</Text>
-        ) : (
-          <View style={styles.listWrapper}>
-            {filtered.map((pasien) => {
-              const hasRontgen =
-                pasien.status === "Perlu Rontgen" &&
-                pasien.fotoKeys &&
-                pasien.fotoKeys.length > 0;
-              return (
-                <TouchableOpacity
-                  key={pasien.id}
-                  style={styles.card}
-                  onPress={() => {
-                    setSelectedPasien(pasien);
-                    setModalVisible(true);
-                  }}
-                  activeOpacity={0.7}
-                >
-                  <View style={styles.avatar}>
-                    <Ionicons name="person" size={24} color="#2E9DA4" />
-                  </View>
+        {/* Search Bar */}
+        <View style={styles.searchRow}>
+          <View style={styles.searchWrapper}>
+            <Ionicons name="search-outline" size={16} color="#aaa" />
+            <TextInput
+              style={styles.searchInput}
+              placeholder="Cari nama pasien..."
+              placeholderTextColor="#aaa"
+              value={search}
+              onChangeText={(text) => {
+                setSearch(text);
+                setShowAll(false);
+              }}
+            />
+            {search.length > 0 && (
+              <TouchableOpacity onPress={() => setSearch("")}>
+                <Ionicons name="close-circle" size={16} color="#aaa" />
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
 
-                  <View style={styles.info}>
-                    <Text style={styles.nama}>{pasien.nama}</Text>
-                    <Text style={styles.sub}>
-                      No. {pasien.no} · {pasien.jam} · {pasien.umur}
-                    </Text>
+        {(() => {
+          const emptyByFilter: Record<
+            string,
+            { icon: string; title: string; subtitle: string }
+          > = {
+            Semua: {
+              icon: "people-outline",
+              title: "Tidak ada pasien hadir",
+              subtitle: "Belum ada pasien yang terdaftar hari ini",
+            },
+            Menunggu: {
+              icon: "time-outline",
+              title: "Tidak ada pasien menunggu",
+              subtitle: "Semua pasien sudah ditangani",
+            },
+            "Di Ruangan": {
+              icon: "medkit-outline",
+              title: "Tidak ada pasien di ruangan",
+              subtitle: "Belum ada pasien yang sedang diperiksa",
+            },
+            "Upload foto": {
+              icon: "camera-outline",
+              title: "Tidak ada pasien perlu upload foto",
+              subtitle: "Belum ada rekomendasi foto dari dokter",
+            },
+            Selesai: {
+              icon: "checkmark-circle-outline",
+              title: "Belum ada pasien selesai",
+              subtitle: "Pasien yang selesai akan muncul di sini",
+            },
+          };
 
-                    <View style={styles.badgeRow}>
-                      {hasRontgen ? (
-                        pasien.fotoKeys!.map((key) => (
-                          <View key={key} style={styles.fotoTag}>
-                            {fotoIcon[key] && (
+          const emptyInfo =
+            emptyByFilter[activeFilter] ?? emptyByFilter["Semua"];
+
+          if (data.length === 0 || filtered.length === 0) {
+            const isSearchEmpty =
+              data.length > 0 && filtered.length === 0 && search !== "";
+            return (
+              <View style={styles.emptyContainer}>
+                <Ionicons
+                  name={
+                    isSearchEmpty ? "search-outline" : (emptyInfo.icon as any)
+                  }
+                  size={52}
+                  color="#ccc"
+                />
+                <Text style={styles.emptyTitle}>
+                  {isSearchEmpty ? "Pasien tidak ditemukan" : emptyInfo.title}
+                </Text>
+                <Text style={styles.emptySubtitle}>
+                  {isSearchEmpty
+                    ? "Coba cari dengan nama yang berbeda"
+                    : emptyInfo.subtitle}
+                </Text>
+              </View>
+            );
+          }
+
+          return (
+            <View style={styles.listWrapper}>
+              {displayedPasien.map((pasien) => {
+                const hasRontgen =
+                  pasien.status === "Perlu Rontgen" &&
+                  pasien.fotoKeys &&
+                  pasien.fotoKeys.length > 0;
+                return (
+                  <TouchableOpacity
+                    key={pasien.id}
+                    style={styles.card}
+                    onPress={() => {
+                      setSelectedPasien(pasien);
+                      setModalVisible(true);
+                    }}
+                    activeOpacity={0.7}
+                  >
+                    <View style={styles.avatar}>
+                      <Ionicons name="person" size={24} color="#2E9DA4" />
+                    </View>
+
+                    <View style={styles.info}>
+                      <Text style={styles.nama}>{pasien.nama}</Text>
+                      <Text style={styles.sub}>
+                        No. {pasien.no} · {pasien.jam} · {pasien.umur}
+                      </Text>
+
+                      <View style={styles.badgeRow}>
+                        {hasRontgen ? (
+                          pasien.fotoKeys!.map((key) => (
+                            <View key={key} style={styles.fotoTag}>
+                              {fotoIcon[key] && (
+                                <Image
+                                  source={fotoIcon[key]}
+                                  style={styles.fotoTagIcon}
+                                  resizeMode="contain"
+                                />
+                              )}
+                              <Text style={styles.fotoTagText}>
+                                {fotoLabel[key]}
+                              </Text>
+                            </View>
+                          ))
+                        ) : (
+                          <View
+                            style={[
+                              styles.statusBadge,
+                              { backgroundColor: pasien.statusBg },
+                            ]}
+                          >
+                            {statusIcon[pasien.status] && (
                               <Image
-                                source={fotoIcon[key]}
-                                style={styles.fotoTagIcon}
+                                source={statusIcon[pasien.status]}
+                                style={styles.badgeIcon}
                                 resizeMode="contain"
                               />
                             )}
-                            <Text style={styles.fotoTagText}>
-                              {fotoLabel[key]}
+                            <Text
+                              style={[
+                                styles.statusText,
+                                { color: pasien.statusWarna },
+                              ]}
+                            >
+                              {pasien.status}
                             </Text>
                           </View>
-                        ))
-                      ) : (
-                        <View
-                          style={[
-                            styles.statusBadge,
-                            { backgroundColor: pasien.statusBg },
-                          ]}
-                        >
-                          {statusIcon[pasien.status] && (
-                            <Image
-                              source={statusIcon[pasien.status]}
-                              style={styles.badgeIcon}
-                              resizeMode="contain"
-                            />
-                          )}
-                          <Text
-                            style={[
-                              styles.statusText,
-                              { color: pasien.statusWarna },
-                            ]}
-                          >
-                            {pasien.status}
-                          </Text>
-                        </View>
-                      )}
+                        )}
+                      </View>
                     </View>
-                  </View>
 
-                  {hasRontgen ? (
-                    <View style={styles.rontgenIcon}>
-                      <Image
-                        source={require("../../../assets/icons/camera.png")}
-                        style={styles.cameraIcon}
-                      />
-                    </View>
-                  ) : (
-                    <Ionicons name="chevron-forward" size={18} color="#ccc" />
-                  )}
+                    {hasRontgen ? (
+                      <View style={styles.rontgenIcon}>
+                        <Image
+                          source={require("../../../assets/icons/camera.png")}
+                          style={styles.cameraIcon}
+                        />
+                      </View>
+                    ) : (
+                      <Ionicons name="chevron-forward" size={18} color="#ccc" />
+                    )}
+                  </TouchableOpacity>
+                );
+              })}
+
+              {hasMore && !showAll && (
+                <TouchableOpacity
+                  style={styles.showMoreBtn}
+                  onPress={() => setShowAll(true)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.showMoreText}>
+                    Lihat Selengkapnya ({filtered.length - PASIEN_LIMIT}{" "}
+                    lainnya)
+                  </Text>
+                  <Ionicons name="chevron-down" size={15} color="#2E9DA4" />
                 </TouchableOpacity>
-              );
-            })}
-          </View>
-        )}
+              )}
+
+              {showAll && filtered.length > PASIEN_LIMIT && (
+                <TouchableOpacity
+                  style={styles.showMoreBtn}
+                  onPress={() => setShowAll(false)}
+                  activeOpacity={0.7}
+                >
+                  <Text style={styles.showMoreText}>
+                    Tampilkan lebih sedikit
+                  </Text>
+                  <Ionicons name="chevron-up" size={15} color="#2E9DA4" />
+                </TouchableOpacity>
+              )}
+            </View>
+          );
+        })()}
       </Animated.ScrollView>
 
       <UbahStatusPasien
@@ -435,11 +533,63 @@ const styles = StyleSheet.create({
     marginTop: 30,
     marginBottom: 20,
   },
-  emptyText: {
+  emptyContainer: {
+    alignItems: "center",
+    justifyContent: "center",
+    marginTop: 60,
+    paddingHorizontal: 32,
+    gap: 8,
+  },
+  emptyTitle: {
+    fontSize: 15,
+    fontWeight: "600",
+    color: "#bbb",
+    marginTop: 8,
+  },
+  emptySubtitle: {
+    fontSize: 13,
+    color: "#ccc",
     textAlign: "center",
-    color: "#aaa",
-    marginTop: 40,
-    fontSize: 14,
+    lineHeight: 20,
+  },
+  searchRow: {
+    flexDirection: "row",
+    marginHorizontal: 16,
+    marginBottom: 14,
+    alignItems: "center",
+  },
+  searchWrapper: {
+    flex: 1,
+    flexDirection: "row",
+    alignItems: "center",
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    gap: 8,
+    elevation: 1,
+    shadowColor: "#000",
+    shadowOpacity: 0.04,
+    shadowRadius: 3,
+  },
+  searchInput: { flex: 1, fontSize: 13, color: "#333" },
+  showMoreBtn: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    paddingVertical: 12,
+    marginBottom: 8,
+    backgroundColor: "#fff",
+    borderRadius: 12,
+    borderWidth: 1,
+    borderColor: "#e0f5f6",
+    elevation: 1,
+  },
+  showMoreText: {
+    fontSize: 13,
+    color: "#2E9DA4",
+    fontWeight: "600",
   },
   filterWrapper: { paddingHorizontal: 16, gap: 6, marginBottom: 16 },
   filterBtn: {
