@@ -19,7 +19,7 @@ import { useSafeAreaInsets } from "react-native-safe-area-context";
 import Svg, { Path } from "react-native-svg";
 
 const { width: SCREEN_W } = Dimensions.get("window");
-const TAB_COUNT = 5;
+const TAB_COUNT = 6;
 const TAB_W = SCREEN_W / TAB_COUNT;
 
 const CIRCLE_D = 46;
@@ -58,6 +58,11 @@ const TABS = [
   },
   {
     key: "laporan",
+    icon: require("../../assets/icons/laporan.png"),
+    iconActive: require("../../assets/icons/laporan.png"),
+  },
+  {
+    key: "artikel",
     icon: require("../../assets/icons/laporan.png"),
     iconActive: require("../../assets/icons/laporan.png"),
   },
